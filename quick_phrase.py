@@ -339,6 +339,15 @@ class PhrasePanel(tk.Toplevel):
         close_btn.bind("<Enter>", lambda e: close_btn.configure(fg="white", bg=COLORS["danger"]))
         close_btn.bind("<Leave>", lambda e: close_btn.configure(fg="#BBDEFB", bg=COLORS["primary_dark"]))
 
+        quit_btn = tk.Label(
+            bar, text=" 종료 ", font=(FONT, 9), bg=COLORS["primary_dark"],
+            fg="#BBDEFB", cursor="hand2"
+        )
+        quit_btn.pack(side="right", padx=(0, 2))
+        quit_btn.bind("<Button-1>", lambda e: self.app._quit_app())
+        quit_btn.bind("<Enter>", lambda e: quit_btn.configure(fg="white", bg=COLORS["danger"]))
+        quit_btn.bind("<Leave>", lambda e: quit_btn.configure(fg="#BBDEFB", bg=COLORS["primary_dark"]))
+
     def _drag_start(self, event):
         self._drag_data["x"] = event.x
         self._drag_data["y"] = event.y
@@ -746,9 +755,11 @@ class FloatingButton(tk.Tk):
         self.panel = None
         self._click_time = None
 
+        self.title("Quick Phrase")
         self.overrideredirect(True)
         self.attributes("-topmost", True)
         self.attributes("-alpha", 0.92)
+        self.protocol("WM_DELETE_WINDOW", self._quit_app)
 
         btn_size = 50
         screen_w = self.winfo_screenwidth()
@@ -764,10 +775,62 @@ class FloatingButton(tk.Tk):
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
+        self.canvas.bind("<Button-3>", self._show_menu)
         self.canvas.bind("<Enter>", lambda e: self._draw_button("#1976D2"))
         self.canvas.bind("<Leave>", lambda e: self._draw_button("#1565C0"))
 
         self._drag_data = {"x": 0, "y": 0, "moved": False}
+
+        self.menu = tk.Menu(self, tearoff=0)
+        self.menu.add_command(label="열기 / 닫기", command=self._toggle_panel)
+        self.menu.add_separator()
+        self.menu.add_command(label="종료", command=self._quit_app)
+
+        # Show the borderless window in the Windows taskbar.
+        self.after(10, self._set_appwindow)
+
+    def _set_appwindow(self):
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            GWL_EXSTYLE = -20
+            WS_EX_APPWINDOW = 0x00040000
+            WS_EX_TOOLWINDOW = 0x00000080
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+            ctypes.windll.user32.SetWindowTextW(hwnd, "Quick Phrase")
+            self.withdraw()
+            self.after(20, self._reshow)
+        except Exception:
+            pass
+
+    def _reshow(self):
+        self.deiconify()
+        self.attributes("-topmost", True)
+
+    def _show_menu(self, event):
+        try:
+            self.menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.menu.grab_release()
+
+    def _toggle_panel(self):
+        if self.panel and self.panel.winfo_exists():
+            self.panel.destroy()
+            self.panel = None
+        else:
+            self.panel = PhrasePanel(self)
+
+    def _quit_app(self):
+        if self.panel and self.panel.winfo_exists():
+            self.panel.destroy()
+            self.panel = None
+        if messagebox.askyesno("종료", "Quick Phrase를 종료하시겠습니까?", parent=self):
+            self.destroy()
 
     def _draw_button(self, color):
         self.canvas.delete("all")
@@ -794,11 +857,7 @@ class FloatingButton(tk.Tk):
     def _on_release(self, event):
         if self._drag_data["moved"]:
             return
-        if self.panel and self.panel.winfo_exists():
-            self.panel.destroy()
-            self.panel = None
-        else:
-            self.panel = PhrasePanel(self)
+        self._toggle_panel()
 
 
 if __name__ == "__main__":
