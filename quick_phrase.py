@@ -9,21 +9,29 @@ import uuid
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "phrases.json")
 RECENT_MAX = 20
 
-# Clean, minimal palette (single accent, soft neutrals).
+# Palette: High Contrast (theme 10) — white surface, black text, strong accent.
 COLORS = {
-    "accent": "#2563EB",
-    "accent_dark": "#1D4ED8",
-    "accent_light": "#EFF6FF",
-    "bg": "#F7F8FA",
+    "accent": "#1D4ED8",
+    "accent_dark": "#1E40AF",
+    "accent_light": "#DBEAFE",
+    "bg": "#FFFFFF",
     "surface": "#FFFFFF",
-    "text": "#1F2937",
-    "text_secondary": "#6B7280",
-    "text_muted": "#9CA3AF",
-    "border": "#E5E7EB",
-    "track": "#EEF0F3",
-    "hover": "#F3F4F6",
-    "success": "#059669",
-    "danger": "#DC2626",
+    "text": "#000000",
+    "text_secondary": "#374151",
+    "text_muted": "#4B5563",
+    "border": "#9CA3AF",
+    "track": "#E5E7EB",
+    "hover": "#EFF2F6",
+    "success": "#047857",
+    "danger": "#B91C1C",
+}
+
+# Layout scale: font sizes (pt) and spacing (px). Tunable in one place.
+LAYOUT = {
+    "panel_w": 410, "panel_h": 560,
+    "header": 13, "search": 12, "seg": 9, "cat": 8,
+    "text": 12, "meta": 9,
+    "row_padx": 16, "row_pady": 12, "wrap": 256,
 }
 
 FONT = "Segoe UI"
@@ -66,102 +74,56 @@ def save_data(data):
 
 
 def set_clipboard(text, widget=None):
-    """Copy text to the clipboard. Returns True on success."""
-    try:
-        import ctypes
+    """Copy text to the clipboard reliably. Returns True on success.
 
-        ctypes.windll.user32.OpenClipboard(0)
-        ctypes.windll.user32.EmptyClipboard()
-        encoded = text.encode("utf-16-le") + b"\x00\x00"
-        h = ctypes.windll.kernel32.GlobalAlloc(0x0042, len(encoded))
-        ptr = ctypes.windll.kernel32.GlobalLock(h)
-        ctypes.cdll.msvcrt.memcpy(ptr, encoded, len(encoded))
-        ctypes.windll.kernel32.GlobalUnlock(h)
-        ctypes.windll.user32.SetClipboardData(13, h)
-        ctypes.windll.user32.CloseClipboard()
-        return True
-    except Exception:
-        pass
+    Retries OpenClipboard (it can be momentarily locked by another app) and
+    verifies SetClipboardData, so repeated copies don't silently fail.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            u = ctypes.windll.user32
+            k = ctypes.windll.kernel32
+            opened = False
+            for _ in range(12):
+                if u.OpenClipboard(0):
+                    opened = True
+                    break
+                k.Sleep(15)
+            if not opened:
+                raise OSError("clipboard busy")
+            try:
+                u.EmptyClipboard()
+                encoded = text.encode("utf-16-le") + b"\x00\x00"
+                h = k.GlobalAlloc(0x0042, len(encoded))
+                ptr = k.GlobalLock(h)
+                ctypes.cdll.msvcrt.memcpy(ptr, encoded, len(encoded))
+                k.GlobalUnlock(h)
+                if not u.SetClipboardData(13, h):
+                    k.GlobalFree(h)
+                    raise OSError("SetClipboardData failed")
+            finally:
+                u.CloseClipboard()
+            return True
+        except Exception:
+            pass
     if widget is not None:
         try:
             widget.clipboard_clear()
             widget.clipboard_append(text)
-            widget.update()
+            widget.update_idletasks()
             return True
         except Exception:
             pass
     return False
 
 
-def send_paste():
-    """Simulate Ctrl+V into the currently focused window (Windows only)."""
-    try:
-        import ctypes
-
-        VK_CONTROL, VK_V = 0x11, 0x56
-        KEYEVENTF_KEYUP = 0x0002
-
-        class KEYBDINPUT(ctypes.Structure):
-            _fields_ = [
-                ("wVk", ctypes.c_ushort),
-                ("wScan", ctypes.c_ushort),
-                ("dwFlags", ctypes.c_ulong),
-                ("time", ctypes.c_ulong),
-                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-            ]
-
-        class INPUT(ctypes.Structure):
-            class _INPUT(ctypes.Union):
-                _fields_ = [("ki", KEYBDINPUT)]
-            _fields_ = [("type", ctypes.c_ulong), ("ii", _INPUT)]
-
-        def key_input(vk, flags=0):
-            inp = INPUT()
-            inp.type = 1
-            inp.ii.ki.wVk = vk
-            inp.ii.ki.dwFlags = flags
-            return inp
-
-        inputs = (INPUT * 4)(
-            key_input(VK_CONTROL),
-            key_input(VK_V),
-            key_input(VK_V, KEYEVENTF_KEYUP),
-            key_input(VK_CONTROL, KEYEVENTF_KEYUP),
-        )
-        ctypes.windll.user32.SendInput(4, ctypes.pointer(inputs[0]), ctypes.sizeof(INPUT))
-    except Exception:
-        pass
-
-
-def get_foreground_window():
-    """Return the handle of the currently active window (Windows only)."""
-    if sys.platform != "win32":
-        return None
-    try:
-        import ctypes
-
-        return ctypes.windll.user32.GetForegroundWindow()
-    except Exception:
-        return None
-
-
-def restore_foreground(hwnd):
-    """Re-activate a previously captured window so the paste lands in it."""
-    if sys.platform != "win32" or not hwnd:
-        return
-    try:
-        import ctypes
-
-        ctypes.windll.user32.SetForegroundWindow(hwnd)
-    except Exception:
-        pass
-
-
 class RoundedButton(tk.Canvas):
     """A flat, rounded-rectangle button drawn on a canvas."""
 
-    def __init__(self, parent, text, command=None, bg_color="#2563EB",
-                 hover_color="#1D4ED8", fg="white", width=96, height=34,
+    def __init__(self, parent, text, command=None, bg_color="#1D4ED8",
+                 hover_color="#1E40AF", fg="white", width=96, height=34,
                  font_size=10, radius=8, **kwargs):
         super().__init__(parent, width=width, height=height,
                          bg=parent.cget("bg"), highlightthickness=0, **kwargs)
@@ -198,7 +160,7 @@ class RoundedButton(tk.Canvas):
 
 
 class PhraseItem(tk.Frame):
-    """A single phrase row: click to copy, double-click to copy+paste."""
+    """A single phrase row: click to copy to the clipboard."""
 
     def __init__(self, parent, phrase_data, on_use, on_edit, on_delete, **kwargs):
         super().__init__(parent, bg=COLORS["surface"], cursor="hand2", **kwargs)
@@ -208,29 +170,30 @@ class PhraseItem(tk.Frame):
         self._on_delete = on_delete
         self._hovered = False
 
-        self.inner = tk.Frame(self, bg=COLORS["surface"], padx=16, pady=11)
+        self.inner = tk.Frame(self, bg=COLORS["surface"],
+                              padx=LAYOUT["row_padx"], pady=LAYOUT["row_pady"])
         self.inner.pack(fill="x")
 
         top = tk.Frame(self.inner, bg=COLORS["surface"])
         top.pack(fill="x")
 
         self.text_label = tk.Label(
-            top, text=phrase_data["text"], font=(FONT, 11),
+            top, text=phrase_data["text"], font=(FONT, LAYOUT["text"]),
             bg=COLORS["surface"], fg=COLORS["text"], anchor="w",
-            wraplength=250, justify="left"
+            wraplength=LAYOUT["wrap"], justify="left"
         )
         self.text_label.pack(side="left", fill="x", expand=True)
 
         actions = tk.Frame(top, bg=COLORS["surface"])
         actions.pack(side="right")
         self.edit_btn = tk.Label(
-            actions, text="✎", font=(FONT, 11), bg=COLORS["surface"],
+            actions, text="✎", font=(FONT, LAYOUT["text"]), bg=COLORS["surface"],
             fg=COLORS["surface"], cursor="hand2", padx=5
         )
         self.edit_btn.pack(side="left")
         self.edit_btn.bind("<Button-1>", self._edit_click)
         self.del_btn = tk.Label(
-            actions, text="🗑", font=(FONT, 10), bg=COLORS["surface"],
+            actions, text="🗑", font=(FONT, LAYOUT["text"] - 1), bg=COLORS["surface"],
             fg=COLORS["surface"], cursor="hand2", padx=2
         )
         self.del_btn.pack(side="left")
@@ -239,7 +202,7 @@ class PhraseItem(tk.Frame):
         meta = tk.Label(
             self.inner,
             text=f"{phrase_data.get('category', '일반')}  ·  {phrase_data.get('use_count', 0)}회",
-            font=(FONT, 8), bg=COLORS["surface"], fg=COLORS["text_muted"], anchor="w"
+            font=(FONT, LAYOUT["meta"]), bg=COLORS["surface"], fg=COLORS["text_muted"], anchor="w"
         )
         meta.pack(fill="x", pady=(3, 0))
         self.meta = meta
@@ -343,7 +306,7 @@ class PhrasePanel(tk.Toplevel):
         self.configure(bg=COLORS["surface"], highlightbackground=COLORS["border"],
                        highlightthickness=1)
 
-        panel_w, panel_h = 400, 560
+        panel_w, panel_h = LAYOUT["panel_w"], LAYOUT["panel_h"]
         btn_x, btn_y = master.winfo_x(), master.winfo_y()
         x = max(8, btn_x - panel_w - 12)
         y = btn_y
@@ -365,7 +328,6 @@ class PhrasePanel(tk.Toplevel):
         self._build_footer()
         self._populate()
 
-    # ---- header ----
     def _build_header(self):
         bar = tk.Frame(self, bg=COLORS["surface"], height=46)
         bar.pack(fill="x")
@@ -373,7 +335,7 @@ class PhrasePanel(tk.Toplevel):
         bar.bind("<ButtonPress-1>", self._drag_start)
         bar.bind("<B1-Motion>", self._drag_move)
 
-        title = tk.Label(bar, text="Quick Phrase", font=(FONT, 12, "bold"),
+        title = tk.Label(bar, text="Quick Phrase", font=(FONT, LAYOUT["header"], "bold"),
                          bg=COLORS["surface"], fg=COLORS["text"])
         title.pack(side="left", padx=16)
         title.bind("<ButtonPress-1>", self._drag_start)
@@ -402,18 +364,17 @@ class PhrasePanel(tk.Toplevel):
         dx, dy = event.x - self._drag["x"], event.y - self._drag["y"]
         self.geometry(f"+{self.winfo_x() + dx}+{self.winfo_y() + dy}")
 
-    # ---- search ----
     def _build_search(self):
         wrap = tk.Frame(self, bg=COLORS["surface"], padx=16)
         wrap.pack(fill="x", pady=(14, 8))
         box = tk.Frame(wrap, bg=COLORS["surface"], highlightbackground=COLORS["border"],
                        highlightthickness=1)
         box.pack(fill="x")
-        tk.Label(box, text="🔍", font=(FONT, 10), bg=COLORS["surface"],
+        tk.Label(box, text="🔍", font=(FONT, LAYOUT["search"] - 1), bg=COLORS["surface"],
                  fg=COLORS["text_muted"]).pack(side="left", padx=(10, 4))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *a: self._populate())
-        entry = tk.Entry(box, textvariable=self.search_var, font=(FONT, 11), bd=0,
+        entry = tk.Entry(box, textvariable=self.search_var, font=(FONT, LAYOUT["search"]), bd=0,
                          bg=COLORS["surface"], fg=COLORS["text"],
                          insertbackground=COLORS["text"])
         entry.pack(side="left", fill="x", expand=True, ipady=7)
@@ -425,7 +386,6 @@ class PhrasePanel(tk.Toplevel):
         clear.pack(side="right")
         clear.bind("<Button-1>", lambda e: self.search_var.set(""))
 
-    # ---- segmented tabs ----
     def _build_segments(self):
         wrap = tk.Frame(self, bg=COLORS["surface"], padx=16)
         wrap.pack(fill="x")
@@ -433,7 +393,7 @@ class PhrasePanel(tk.Toplevel):
         track.pack(fill="x")
         self.seg_buttons = {}
         for val, label in [("recent", "최근"), ("all", "전체"), ("frequent", "자주 사용")]:
-            b = tk.Label(track, text=label, font=(FONT, 9), bg=COLORS["track"],
+            b = tk.Label(track, text=label, font=(FONT, LAYOUT["seg"]), bg=COLORS["track"],
                          fg=COLORS["text_secondary"], cursor="hand2", pady=6)
             b.pack(side="left", fill="x", expand=True, padx=3, pady=3)
             b.bind("<Button-1>", lambda e, v=val: self._switch_tab(v))
@@ -448,11 +408,12 @@ class PhrasePanel(tk.Toplevel):
     def _highlight_segment(self):
         for val, b in self.seg_buttons.items():
             if val == self.current_tab:
-                b.configure(bg=COLORS["surface"], fg=COLORS["accent"], font=(FONT, 9, "bold"))
+                b.configure(bg=COLORS["surface"], fg=COLORS["accent"],
+                            font=(FONT, LAYOUT["seg"], "bold"))
             else:
-                b.configure(bg=COLORS["track"], fg=COLORS["text_secondary"], font=(FONT, 9))
+                b.configure(bg=COLORS["track"], fg=COLORS["text_secondary"],
+                            font=(FONT, LAYOUT["seg"]))
 
-    # ---- category chips ----
     def _build_categories(self):
         self.cat_frame = tk.Frame(self, bg=COLORS["surface"], padx=14)
         self.cat_frame.pack(fill="x", pady=(10, 2))
@@ -464,7 +425,7 @@ class PhrasePanel(tk.Toplevel):
         for cat in ["전체"] + self.app.data["categories"]:
             active = cat == self.current_category
             chip = tk.Label(
-                self.cat_frame, text=cat, font=(FONT, 8),
+                self.cat_frame, text=cat, font=(FONT, LAYOUT["cat"]),
                 bg=COLORS["accent_light"] if active else COLORS["surface"],
                 fg=COLORS["accent"] if active else COLORS["text_secondary"],
                 cursor="hand2", padx=8, pady=3,
@@ -473,7 +434,7 @@ class PhrasePanel(tk.Toplevel):
             )
             chip.pack(side="left", padx=2)
             chip.bind("<Button-1>", lambda e, c=cat: self._filter_category(c))
-        add = tk.Label(self.cat_frame, text="+", font=(FONT, 9, "bold"),
+        add = tk.Label(self.cat_frame, text="+", font=(FONT, LAYOUT["cat"] + 1, "bold"),
                        bg=COLORS["surface"], fg=COLORS["text_muted"], cursor="hand2",
                        padx=7, pady=2, highlightbackground=COLORS["border"],
                        highlightthickness=1)
@@ -485,13 +446,11 @@ class PhrasePanel(tk.Toplevel):
         self._rebuild_categories()
         self._populate()
 
-    # ---- list ----
     def _build_list(self):
         self.scroll = ScrollableFrame(self, bg=COLORS["surface"])
         self.scroll.pack(fill="both", expand=True, padx=0, pady=(6, 0))
         tk.Frame(self, bg=COLORS["border"], height=1).pack(fill="x")
 
-    # ---- footer ----
     def _build_footer(self):
         bar = tk.Frame(self, bg=COLORS["surface"], padx=16)
         bar.pack(fill="x", pady=10)
@@ -517,7 +476,6 @@ class PhrasePanel(tk.Toplevel):
         finally:
             self.more_menu.grab_release()
 
-    # ---- data / list population ----
     def _get_filtered(self):
         query = self.search_var.get().strip().lower()
         phrases = self.app.data["phrases"]
@@ -539,7 +497,7 @@ class PhrasePanel(tk.Toplevel):
         if not phrases:
             msg = ("문장이 없습니다.\n아래 ‘＋ 새 문장 추가’로 시작하세요."
                    if not self.app.data["phrases"] else "검색 결과가 없습니다.")
-            tk.Label(self.scroll.scrollable, text=msg, font=(FONT, 10),
+            tk.Label(self.scroll.scrollable, text=msg, font=(FONT, LAYOUT["text"] - 1),
                      bg=COLORS["surface"], fg=COLORS["text_muted"], pady=48).pack(fill="x")
             return
         for p in phrases:
@@ -547,7 +505,6 @@ class PhrasePanel(tk.Toplevel):
                        on_use=self._use_phrase,
                        on_edit=self._edit_phrase, on_delete=self._delete_phrase).pack(fill="x")
 
-    # ---- actions ----
     def _record_use(self, phrase):
         pid = phrase["id"]
         for p in self.app.data["phrases"]:
@@ -568,31 +525,20 @@ class PhrasePanel(tk.Toplevel):
         return None
 
     def _use_phrase(self, phrase):
-        now = time.time()
-        if now - getattr(self, "_last_use", 0) < 0.3:
-            return
-        self._last_use = now
+        # Click = copy to clipboard. The user pastes with Ctrl+V wherever they
+        # want; we never touch window focus, so nothing else moves or closes.
+        ok = set_clipboard(phrase["text"], self)
         self._record_use(phrase)
-        set_clipboard(phrase["text"], self)
         item = self._find_item(phrase)
         if item:
             item.flash()
-        hwnd = getattr(self.app, "_target_hwnd", None)
-        if sys.platform == "win32" and hwnd:
-            self._toast("붙여넣기 완료")
-            self.app.after(30, lambda: self._do_paste(hwnd))
-        else:
-            self._toast("복사됨  ·  Ctrl+V로 붙여넣기")
-
-    def _do_paste(self, hwnd):
-        restore_foreground(hwnd)
-        self.app.after(90, send_paste)
+        self._toast("복사됨  ·  Ctrl+V로 붙여넣기" if ok else "복사 실패 — 다시 클릭하세요")
 
     def _toast(self, msg):
         if self._toast_lbl is not None and self._toast_lbl.winfo_exists():
             self._toast_lbl.destroy()
         self._toast_lbl = tk.Label(self, text=msg, font=(FONT, 9, "bold"),
-                                   bg=COLORS["text"], fg="white", padx=14, pady=6)
+                                   bg=COLORS["text"], fg=COLORS["surface"], padx=14, pady=6)
         self._toast_lbl.place(relx=0.5, rely=0.93, anchor="center")
         self.after(1200, self._hide_toast)
 
@@ -736,7 +682,7 @@ class PhrasePanel(tk.Toplevel):
         tk.Label(body, text="내보내기 — 아래 내용을 복사해 보관하세요", font=(FONT, 9),
                  bg=COLORS["surface"], fg=COLORS["text_secondary"]).pack(anchor="w")
         exp = tk.Text(body, font=(FONT, 9), height=5, bd=0, wrap="word",
-                      bg=COLORS["bg"], fg=COLORS["text"], padx=8, pady=6)
+                      bg=COLORS["track"], fg=COLORS["text"], padx=8, pady=6)
         exp.pack(fill="x", pady=(4, 12))
         exp.insert("1.0", json.dumps(self.app.data, ensure_ascii=False, indent=2))
         exp.configure(state="disabled")
@@ -744,7 +690,7 @@ class PhrasePanel(tk.Toplevel):
         tk.Label(body, text="가져오기 — JSON을 붙여넣고 실행", font=(FONT, 9),
                  bg=COLORS["surface"], fg=COLORS["text_secondary"]).pack(anchor="w")
         imp = tk.Text(body, font=(FONT, 9), height=5, bd=0, wrap="word",
-                      bg=COLORS["bg"], fg=COLORS["text"], padx=8, pady=6)
+                      bg=COLORS["track"], fg=COLORS["text"], padx=8, pady=6)
         imp.pack(fill="x", pady=(4, 10))
 
         def do_import():
@@ -786,7 +732,6 @@ class FloatingButton(tk.Tk):
         super().__init__()
         self.data = load_data()
         self.panel = None
-        self._target_hwnd = None
 
         self.title("Quick Phrase")
         self.overrideredirect(True)
@@ -825,6 +770,7 @@ class FloatingButton(tk.Tk):
         self.canvas.create_text(s // 2, s // 2, text="Q", font=(FONT, 22, "bold"), fill="white")
 
     def _set_appwindow(self):
+        # Show the borderless window in the Windows taskbar as "Quick Phrase".
         if sys.platform != "win32":
             return
         try:
@@ -833,10 +779,9 @@ class FloatingButton(tk.Tk):
             GWL_EXSTYLE = -20
             WS_EX_APPWINDOW = 0x00040000
             WS_EX_TOOLWINDOW = 0x00000080
-            WS_EX_NOACTIVATE = 0x08000000
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
             style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW | WS_EX_NOACTIVATE
+            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
             ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
             ctypes.windll.user32.SetWindowTextW(hwnd, "Quick Phrase")
             self.withdraw()
@@ -854,27 +799,11 @@ class FloatingButton(tk.Tk):
         finally:
             self.menu.grab_release()
 
-    def _own_hwnd(self):
-        try:
-            import ctypes
-
-            return ctypes.windll.user32.GetParent(self.winfo_id())
-        except Exception:
-            return None
-
-    def _capture_target(self):
-        # Remember the window that was active (e.g. the chart) before we open,
-        # so a click can paste straight back into it.
-        hwnd = get_foreground_window()
-        if hwnd and hwnd != self._own_hwnd():
-            self._target_hwnd = hwnd
-
     def _toggle_panel(self):
         if self.panel and self.panel.winfo_exists():
             self.panel.destroy()
             self.panel = None
         else:
-            self._capture_target()
             self.panel = PhrasePanel(self)
 
     def _quit_app(self):
