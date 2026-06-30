@@ -653,6 +653,7 @@ class PhrasePanel(tk.Toplevel):
         self.count_label.pack(side="right", padx=6)
 
         self.more_menu = tk.Menu(self, tearoff=0)
+        self.more_menu.add_command(label="카테고리 관리", command=self._manage_categories)
         self.more_menu.add_command(label="가져오기 / 내보내기", command=self._import_export)
 
     def _show_more_menu(self, event):
@@ -884,6 +885,118 @@ class PhrasePanel(tk.Toplevel):
         RoundedButton(row, text="취소", command=win.destroy, bg_color=COLORS["hover"],
                       hover_color=COLORS["border"], fg=COLORS["text"],
                       width=70, height=30).pack(side="right", padx=(0, 8))
+
+    def _manage_categories(self):
+        win = tk.Toplevel(self)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg=COLORS["surface"], highlightbackground=COLORS["border"],
+                      highlightthickness=1)
+        win.geometry(f"320x440+{self.winfo_x() + 30}+{self.winfo_y() + 50}")
+
+        tk.Label(win, text="카테고리 관리", font=(FONT, 12, "bold"), bg=COLORS["surface"],
+                 fg=COLORS["text"]).pack(anchor="w", padx=16, pady=(14, 2))
+        tk.Frame(win, bg=COLORS["border"], height=1).pack(fill="x")
+        tk.Label(win, text="드래그하여 순서 변경 · 선택 후 삭제", font=(FONT, 9),
+                 bg=COLORS["surface"], fg=COLORS["text_secondary"]).pack(anchor="w", padx=16, pady=(8, 4))
+
+        body = tk.Frame(win, bg=COLORS["surface"], padx=16)
+        body.pack(fill="both", expand=True)
+
+        lb = tk.Listbox(body, font=(FONT, 11), activestyle="none", bd=1, relief="solid",
+                        highlightthickness=0, selectbackground=COLORS["accent_light"],
+                        selectforeground=COLORS["accent"], fg=COLORS["text"])
+        lb.pack(fill="both", expand=True, pady=(0, 10))
+        cats = self.app.data["categories"]
+        for c in cats:
+            lb.insert(tk.END, c)
+
+        drag = {"i": None}
+
+        def press(e):
+            drag["i"] = lb.nearest(e.y)
+
+        def motion(e):
+            j = drag["i"]
+            i = lb.nearest(e.y)
+            if j is None or i < 0 or i == j:
+                return
+            cats.insert(i, cats.pop(j))
+            t = lb.get(j)
+            lb.delete(j)
+            lb.insert(i, t)
+            lb.selection_clear(0, tk.END)
+            lb.selection_set(i)
+            drag["i"] = i
+
+        def release(e):
+            save_data(self.app.data)
+            self._rebuild_categories()
+
+        lb.bind("<Button-1>", press)
+        lb.bind("<B1-Motion>", motion)
+        lb.bind("<ButtonRelease-1>", release)
+
+        def refresh():
+            lb.delete(0, tk.END)
+            for c in cats:
+                lb.insert(tk.END, c)
+
+        def do_add():
+            name = add_var.get().strip()
+            if name and name not in cats:
+                cats.append(name)
+                save_data(self.app.data)
+                refresh()
+                self._rebuild_categories()
+            add_var.set("")
+
+        def do_delete():
+            sel = lb.curselection()
+            if not sel:
+                return
+            cat = lb.get(sel[0])
+            if not messagebox.askyesno(
+                    "삭제", f"‘{cat}’ 카테고리를 삭제할까요?\n해당 문장은 ‘일반’으로 옮겨집니다.",
+                    parent=win):
+                return
+            if cat in cats:
+                cats.remove(cat)
+            if "일반" not in cats:
+                cats.insert(0, "일반")
+            for p in self.app.data["phrases"]:
+                if p.get("category") == cat:
+                    p["category"] = "일반"
+            if self.current_category == cat:
+                self.current_category = "전체"
+            save_data(self.app.data)
+            refresh()
+            self._rebuild_categories()
+            self._populate()
+
+        add_row = tk.Frame(win, bg=COLORS["surface"], padx=16)
+        add_row.pack(fill="x")
+        add_wrap = tk.Frame(add_row, bg=COLORS["surface"], highlightbackground=COLORS["border"],
+                            highlightthickness=1)
+        add_wrap.pack(side="left", fill="x", expand=True)
+        add_var = tk.StringVar()
+        add_entry = tk.Entry(add_wrap, textvariable=add_var, font=(FONT, 10), bd=0,
+                             bg=COLORS["surface"], fg=COLORS["text"])
+        add_entry.pack(fill="x", ipady=5, padx=6)
+        add_entry.bind("<Return>", lambda e: do_add())
+        RoundedButton(add_row, text="추가", command=do_add, bg_color=COLORS["accent"],
+                      hover_color=COLORS["accent_dark"], width=58, height=30).pack(side="right", padx=(8, 0))
+
+        btns = tk.Frame(win, bg=COLORS["surface"], padx=16)
+        btns.pack(fill="x", pady=12)
+        RoundedButton(btns, text="삭제", command=do_delete, bg_color=COLORS["danger"],
+                      hover_color="#991B1B", width=70, height=32).pack(side="left")
+        RoundedButton(btns, text="완료",
+                      command=lambda: (save_data(self.app.data), self._rebuild_categories(),
+                                       self._populate(), win.destroy()),
+                      bg_color=COLORS["accent"], hover_color=COLORS["accent_dark"],
+                      width=70, height=32).pack(side="right")
+        win.focus_force()
 
     def _import_export(self):
         win = tk.Toplevel(self)
