@@ -132,16 +132,37 @@ def get_foreground_window():
         return None
 
 
-def restore_foreground(hwnd):
-    """Re-activate a captured window so the paste lands in it."""
+def focus_window(hwnd):
+    """Reliably move focus to a window so a following Ctrl+V lands in it.
+
+    Plain SetForegroundWindow is blocked by Windows' foreground lock, so we
+    AttachThreadInput to the target's thread first — the documented way to
+    hand focus to another app's window.
+    """
     if sys.platform != "win32" or not hwnd:
-        return
+        return False
     try:
         import ctypes
 
-        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        u = ctypes.windll.user32
+        k = ctypes.windll.kernel32
+        if not u.IsWindow(hwnd):
+            return False
+        if u.IsIconic(hwnd):
+            u.ShowWindow(hwnd, 9)  # SW_RESTORE
+        cur = k.GetCurrentThreadId()
+        tgt = u.GetWindowThreadProcessId(hwnd, None)
+        attached = False
+        if cur != tgt:
+            attached = bool(u.AttachThreadInput(cur, tgt, True))
+        u.BringWindowToTop(hwnd)
+        u.SetForegroundWindow(hwnd)
+        u.SetFocus(hwnd)
+        if attached:
+            u.AttachThreadInput(cur, tgt, False)
+        return True
     except Exception:
-        pass
+        return False
 
 
 def send_paste():
@@ -619,19 +640,23 @@ class PhrasePanel(tk.Toplevel):
         self._toast("복사됨  ·  Ctrl+V로 붙여넣기" if ok else "복사 실패 — 다시 클릭하세요")
 
     def _paste_phrase(self, phrase):
-        # Double click = copy and auto-paste into the window that was active
-        # when the panel opened (the chart we captured on open).
-        set_clipboard(phrase["text"], self)
+        # Double click = copy, then auto-paste into the window that was active
+        # when the panel opened (the chart captured on open).
+        ok = set_clipboard(phrase["text"], self)
         self._record_use(phrase)
-        item = self._find_item(phrase)
-        if item:
-            item.flash()
         hwnd = getattr(self.app, "_target_hwnd", None)
-        if sys.platform == "win32" and hwnd:
-            self._toast("붙여넣었습니다")
-            restore_foreground(hwnd)
-            self.app.after(120, send_paste)
+        app = self.app
+        if sys.platform == "win32" and hwnd and ok:
+            # Close the panel first so it cannot cover the chart or keep focus,
+            # then hand focus to the chart and paste into it.
+            self.destroy()
+            app.panel = None
+            app.after(50, lambda: focus_window(hwnd))
+            app.after(180, send_paste)
         else:
+            item = self._find_item(phrase)
+            if item:
+                item.flash()
             self._toast("복사됨  ·  Ctrl+V로 붙여넣기")
 
     def _toast(self, msg):
