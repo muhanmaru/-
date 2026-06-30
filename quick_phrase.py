@@ -839,12 +839,21 @@ class FloatingButton(tk.Tk):
         self.attributes("-topmost", True)
         self.protocol("WM_DELETE_WINDOW", self._quit_app)
 
-        self.size = 52
+        self.size = 40
+        # A key color that we make fully transparent, so only the round marker
+        # shows (the square window corners disappear / become click-through).
+        self._key = "#FF00FE"
+        self.configure(bg=self._key)
+        try:
+            self.attributes("-transparentcolor", self._key)
+        except Exception:
+            pass
+
         screen_w = self.winfo_screenwidth()
-        self.geometry(f"{self.size}x{self.size}+{screen_w - self.size - 18}+18")
+        self.geometry(f"{self.size}x{self.size}+{screen_w - self.size - 16}+16")
 
         self.canvas = tk.Canvas(self, width=self.size, height=self.size,
-                                highlightthickness=0, bg=COLORS["bg"], cursor="hand2")
+                                highlightthickness=0, bg=self._key, cursor="hand2")
         self.canvas.pack()
         self._draw(COLORS["accent"])
 
@@ -867,8 +876,8 @@ class FloatingButton(tk.Tk):
     def _draw(self, color):
         s = self.size
         self.canvas.delete("all")
-        self.canvas.create_oval(4, 4, s - 4, s - 4, fill=color, outline="")
-        self.canvas.create_text(s // 2, s // 2, text="Q", font=(FONT, 22, "bold"), fill="white")
+        self.canvas.create_oval(1, 1, s - 1, s - 1, fill=color, outline="")
+        self.canvas.create_text(s // 2, s // 2 - 1, text="Q", font=(FONT, 16, "bold"), fill="white")
 
     def _set_appwindow(self):
         # Show the borderless window in the Windows taskbar as "Quick Phrase".
