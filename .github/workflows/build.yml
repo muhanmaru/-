@@ -1,0 +1,54 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main, claude/communication-clarity-xwwez5]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install PyInstaller
+      run: pip install pyinstaller
+
+    - name: Build EXE
+      run: pyinstaller --onefile --noconsole --name QuickPhrase quick_phrase.py
+
+    - name: Upload EXE artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: QuickPhrase-Windows
+        path: dist/QuickPhrase.exe
+        retention-days: 90
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v1.0.${{ github.run_number }}
+        name: QuickPhrase v1.0.${{ github.run_number }}
+        body: |
+          ## QuickPhrase - 진료용 플로팅 텍스트 스니펫 매니저
+
+          아래 **QuickPhrase.exe** 파일을 다운로드해서 실행하세요.
+
+          ### 기능
+          - 화면 우측 상단 플로팅 버튼 (Q)
+          - 문장 검색 / 최근 사용 / 자주 사용 탭
+          - 카테고리별 필터링
+          - 문장 추가 / 편집 / 삭제
+          - 더블클릭으로 자동 붙여넣기
+        files: dist/QuickPhrase.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
