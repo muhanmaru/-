@@ -1,0 +1,36 @@
+{
+  "categories": ["일반", "진료", "처방", "안내"],
+  "phrases": [
+    {
+      "id": "sample01",
+      "text": "특이사항 없음",
+      "category": "진료",
+      "use_count": 0
+    },
+    {
+      "id": "sample02",
+      "text": "경과 관찰 필요",
+      "category": "진료",
+      "use_count": 0
+    },
+    {
+      "id": "sample03",
+      "text": "다음 외래 시 재평가 예정",
+      "category": "진료",
+      "use_count": 0
+    },
+    {
+      "id": "sample04",
+      "text": "처방전 발행 완료",
+      "category": "처방",
+      "use_count": 0
+    },
+    {
+      "id": "sample05",
+      "text": "다음 방문 시 검사 결과 확인 예정",
+      "category": "안내",
+      "use_count": 0
+    }
+  ],
+  "recent_ids": []
+}
