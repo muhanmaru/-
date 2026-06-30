@@ -6,3 +6,6 @@ build/
 *.ico
 *.zip
 *.pyw
+
+panel_preview.png
+test_gui*.py

@@ -51,8 +51,14 @@ def load_data():
             data["recent_ids"] = []
         return data
     return {
-        "categories": ["일반"],
-        "phrases": [],
+        "categories": ["일반", "진료", "처방", "안내"],
+        "phrases": [
+            {"id": "sample01", "text": "특이사항 없음", "category": "진료", "use_count": 0},
+            {"id": "sample02", "text": "경과 관찰 필요", "category": "진료", "use_count": 0},
+            {"id": "sample03", "text": "다음 외래 시 재평가 예정", "category": "진료", "use_count": 0},
+            {"id": "sample04", "text": "처방전 발행 완료", "category": "처방", "use_count": 0},
+            {"id": "sample05", "text": "다음 방문 시 검사 결과 확인 예정", "category": "안내", "use_count": 0},
+        ],
         "recent_ids": [],
     }
 
@@ -122,8 +128,8 @@ class RoundedButton(tk.Canvas):
         self._fg = fg
         self._text = text
         self._cmd = command
-        self._w = width
-        self._h = height
+        self._cw = width
+        self._ch = height
         self._font_size = font_size
         self._draw(bg_color)
         self.bind("<Enter>", lambda e: self._draw(hover_color))
@@ -134,7 +140,7 @@ class RoundedButton(tk.Canvas):
     def _draw(self, color):
         self.delete("all")
         r = 6
-        w, h = self._w, self._h
+        w, h = self._cw, self._ch
         self.create_arc(0, 0, r * 2, r * 2, start=90, extent=90, fill=color, outline=color)
         self.create_arc(w - r * 2, 0, w, r * 2, start=0, extent=90, fill=color, outline=color)
         self.create_arc(0, h - r * 2, r * 2, h, start=180, extent=90, fill=color, outline=color)
@@ -301,7 +307,7 @@ class PhrasePanel(tk.Toplevel):
         self.geometry(f"{panel_w}x{panel_h}+{x}+{y}")
 
         self._drag_data = {"x": 0, "y": 0}
-        self.current_tab = "recent"
+        self.current_tab = "recent" if master.data.get("recent_ids") else "all"
         self.current_category = "전체"
 
         self._build_titlebar()
@@ -343,8 +349,8 @@ class PhrasePanel(tk.Toplevel):
         self.geometry(f"+{self.winfo_x() + dx}+{self.winfo_y() + dy}")
 
     def _build_search(self):
-        frame = tk.Frame(self, bg=COLORS["bg"], padx=14, pady=(10, 6))
-        frame.pack(fill="x")
+        frame = tk.Frame(self, bg=COLORS["bg"], padx=14)
+        frame.pack(fill="x", pady=(10, 6))
 
         search_border = tk.Frame(frame, bg=COLORS["border"], padx=1, pady=1)
         search_border.pack(fill="x")
@@ -375,8 +381,8 @@ class PhrasePanel(tk.Toplevel):
         clear_btn.bind("<Button-1>", lambda e: self.search_var.set(""))
 
     def _build_tabs(self):
-        frame = tk.Frame(self, bg=COLORS["bg"], padx=14, pady=(0, 4))
-        frame.pack(fill="x")
+        frame = tk.Frame(self, bg=COLORS["bg"], padx=14)
+        frame.pack(fill="x", pady=(0, 4))
 
         self.tab_buttons = {}
         for val, label in [("recent", "최근 사용"), ("all", "전체"), ("frequent", "자주 사용")]:
@@ -404,8 +410,8 @@ class PhrasePanel(tk.Toplevel):
                 btn.configure(bg=COLORS["bg"], fg=COLORS["text_secondary"])
 
     def _build_category_filter(self):
-        frame = tk.Frame(self, bg=COLORS["bg"], padx=14, pady=(0, 4))
-        frame.pack(fill="x")
+        frame = tk.Frame(self, bg=COLORS["bg"], padx=14)
+        frame.pack(fill="x", pady=(0, 4))
 
         self.cat_frame = frame
         self._rebuild_category_chips()
@@ -443,8 +449,8 @@ class PhrasePanel(tk.Toplevel):
         self.scroll_frame.pack(fill="both", expand=True, padx=14, pady=(0, 6))
 
     def _build_bottom_bar(self):
-        bar = tk.Frame(self, bg=COLORS["bg"], padx=14, pady=(0, 10))
-        bar.pack(fill="x")
+        bar = tk.Frame(self, bg=COLORS["bg"], padx=14)
+        bar.pack(fill="x", pady=(0, 10))
 
         RoundedButton(
             bar, text="+ 새 문장 추가", command=self._add_phrase,
