@@ -304,17 +304,9 @@ class PhraseItem(tk.Frame):
         self.del_btn.pack(side="left")
         self.del_btn.bind("<Button-1>", self._del_click)
 
-        meta = tk.Label(
-            self.inner,
-            text=f"{phrase_data.get('category', '일반')}  ·  {phrase_data.get('use_count', 0)}회",
-            font=(FONT, LAYOUT["meta"]), bg=COLORS["surface"], fg=COLORS["text_muted"], anchor="w"
-        )
-        meta.pack(fill="x", pady=(3, 0))
-        self.meta = meta
-
         tk.Frame(self, bg=COLORS["border"], height=1).pack(fill="x", side="bottom")
 
-        self._row_widgets = [self, self.inner, top, self.text_label, meta, actions]
+        self._row_widgets = [self, self.inner, top, self.text_label, actions]
         for w in self._row_widgets:
             w.bind("<Enter>", self._hover_in)
             w.bind("<Leave>", self._hover_out)
@@ -347,7 +339,7 @@ class PhraseItem(tk.Frame):
         return "break"
 
     def _paint(self, bg, show_actions):
-        for w in [self, self.inner, self.text_label, self.meta]:
+        for w in [self, self.inner, self.text_label]:
             try:
                 w.configure(bg=bg)
             except Exception:
@@ -449,7 +441,11 @@ class PhrasePanel(tk.Toplevel):
 
         self._drag = {"x": 0, "y": 0}
         self._panel_w = panel_w
-        self.current_tab = "recent" if master.data.get("recent_ids") else "all"
+        saved_tab = master.data.get("last_tab")
+        if saved_tab in ("all", "recent", "frequent"):
+            self.current_tab = saved_tab
+        else:
+            self.current_tab = "recent" if master.data.get("recent_ids") else "all"
         self.current_category = "전체"
         self._toast_lbl = None
 
@@ -625,6 +621,8 @@ class PhrasePanel(tk.Toplevel):
 
     def _switch_tab(self, tab):
         self.current_tab = tab
+        self.app.data["last_tab"] = tab
+        save_data(self.app.data)
         self._highlight_segment()
         self._populate()
 
@@ -901,6 +899,7 @@ class PhrasePanel(tk.Toplevel):
             if not phrase:
                 # Land on 최근 with no filters so the new phrase is visible.
                 self.current_tab = "recent"
+                self.app.data["last_tab"] = "recent"
                 self.current_category = "전체"
                 self.search_var.set("")
                 self._highlight_segment()
