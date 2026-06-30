@@ -430,13 +430,21 @@ class PhrasePanel(tk.Toplevel):
         self.configure(bg=COLORS["surface"], highlightbackground=COLORS["border"],
                        highlightthickness=1)
 
-        panel_w, panel_h = LAYOUT["panel_w"], LAYOUT["panel_h"]
-        btn_x, btn_y = master.winfo_x(), master.winfo_y()
-        x = max(8, btn_x - panel_w - 12)
-        y = btn_y
-        screen_h = self.winfo_screenheight()
-        if y + panel_h > screen_h:
-            y = max(8, screen_h - panel_h - 20)
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        geom = master.data.get("panel_geom") or {}
+        if all(k in geom for k in ("w", "h", "x", "y")):
+            panel_w = max(300, int(geom["w"]))
+            panel_h = max(360, int(geom["h"]))
+            x = min(max(0, int(geom["x"])), max(0, sw - 120))
+            y = min(max(0, int(geom["y"])), max(0, sh - 80))
+        else:
+            panel_w, panel_h = LAYOUT["panel_w"], LAYOUT["panel_h"]
+            btn_x, btn_y = master.winfo_x(), master.winfo_y()
+            x = max(8, btn_x - panel_w - 12)
+            y = btn_y
+            if y + panel_h > sh:
+                y = max(8, sh - panel_h - 20)
+        LAYOUT["wrap"] = max(160, panel_w - 96)
         self.geometry(f"{panel_w}x{panel_h}+{x}+{y}")
 
         self._drag = {"x": 0, "y": 0}
@@ -452,29 +460,81 @@ class PhrasePanel(tk.Toplevel):
         self._build_list()
         self._build_footer()
         self._populate()
-        self._add_resize_grip()
+        self._add_resize_handles()
         self.after(10, self._grab_focus)
 
-    def _add_resize_grip(self):
+    def _add_resize_handles(self):
+        # Thin handles on every edge and corner so the borderless window can be
+        # resized in any direction, like a normal window.
+        specs = [
+            ("l",  dict(relx=0, rely=0, relheight=1, width=5, anchor="nw"), "left_side"),
+            ("r",  dict(relx=1, rely=0, relheight=1, width=5, anchor="ne"), "right_side"),
+            ("t",  dict(relx=0, rely=0, relwidth=1, height=5, anchor="nw"), "top_side"),
+            ("b",  dict(relx=0, rely=1, relwidth=1, height=5, anchor="sw"), "bottom_side"),
+            ("tl", dict(relx=0, rely=0, width=11, height=11, anchor="nw"), "top_left_corner"),
+            ("tr", dict(relx=1, rely=0, width=11, height=11, anchor="ne"), "top_right_corner"),
+            ("bl", dict(relx=0, rely=1, width=11, height=11, anchor="sw"), "bottom_left_corner"),
+            ("br", dict(relx=1, rely=1, width=14, height=14, anchor="se"), "bottom_right_corner"),
+        ]
+        for dirs, place_kw, cursor in specs:
+            h = tk.Frame(self, bg=COLORS["surface"], cursor=cursor)
+            h.place(**place_kw)
+            h.bind("<ButtonPress-1>", lambda e, d=dirs: self._edge_press(e, d))
+            h.bind("<B1-Motion>", self._edge_drag)
+            h.bind("<ButtonRelease-1>", self._edge_release)
         grip = tk.Label(self, text="◢", font=(FONT, 9), bg=COLORS["surface"],
                         fg=COLORS["text_muted"], cursor="bottom_right_corner")
-        grip.place(relx=1.0, rely=1.0, x=-2, y=-2, anchor="se")
-        grip.bind("<ButtonPress-1>", self._resize_start)
-        grip.bind("<B1-Motion>", self._resize_move)
-        grip.bind("<ButtonRelease-1>", self._resize_end)
+        grip.place(relx=1.0, rely=1.0, x=-3, y=-3, anchor="se")
+        grip.bind("<ButtonPress-1>", lambda e: self._edge_press(e, "br"))
+        grip.bind("<B1-Motion>", self._edge_drag)
+        grip.bind("<ButtonRelease-1>", self._edge_release)
 
-    def _resize_start(self, e):
-        self._rs = (e.x_root, e.y_root, self.winfo_width(), self.winfo_height())
+    def _edge_press(self, e, dirs):
+        self._ez = (e.x_root, e.y_root, self.winfo_x(), self.winfo_y(),
+                    self.winfo_width(), self.winfo_height(), dirs)
 
-    def _resize_move(self, e):
-        x0, y0, w0, h0 = self._rs
-        nw = max(300, w0 + (e.x_root - x0))
-        nh = max(360, h0 + (e.y_root - y0))
-        self.geometry(f"{nw}x{nh}")
+    def _edge_drag(self, e):
+        x0, y0, ox, oy, ow, oh, dirs = self._ez
+        dx, dy = e.x_root - x0, e.y_root - y0
+        nx, ny, nw, nh = ox, oy, ow, oh
+        if "r" in dirs:
+            nw = max(300, ow + dx)
+        if "b" in dirs:
+            nh = max(360, oh + dy)
+        if "l" in dirs:
+            nw = max(300, ow - dx)
+            nx = ox + (ow - nw)
+        if "t" in dirs:
+            nh = max(360, oh - dy)
+            ny = oy + (oh - nh)
+        self.geometry(f"{nw}x{nh}+{nx}+{ny}")
 
-    def _resize_end(self, e):
+    def _edge_release(self, e):
         self._panel_w = self.winfo_width()
         LAYOUT["wrap"] = max(160, self._panel_w - 96)
+        self._rebuild_categories()
+        self._populate()
+        self._save_geom()
+
+    def _save_geom(self):
+        try:
+            self.app.data["panel_geom"] = {
+                "w": self.winfo_width(), "h": self.winfo_height(),
+                "x": self.winfo_x(), "y": self.winfo_y()}
+            save_data(self.app.data)
+        except Exception:
+            pass
+
+    def _reset_geom(self):
+        self.app.data.pop("panel_geom", None)
+        save_data(self.app.data)
+        pw, ph = LAYOUT["panel_w"], LAYOUT["panel_h"]
+        LAYOUT["wrap"] = max(160, pw - 96)
+        bx, by = self.app.winfo_x(), self.app.winfo_y()
+        x = max(8, bx - pw - 12)
+        y = by
+        self._panel_w = pw
+        self.geometry(f"{pw}x{ph}+{x}+{y}")
         self._rebuild_categories()
         self._populate()
 
@@ -491,12 +551,14 @@ class PhrasePanel(tk.Toplevel):
         bar.pack_propagate(False)
         bar.bind("<ButtonPress-1>", self._drag_start)
         bar.bind("<B1-Motion>", self._drag_move)
+        bar.bind("<ButtonRelease-1>", self._drag_end)
 
         title = tk.Label(bar, text="Quick Phrase", font=(FONT, LAYOUT["header"], "bold"),
                          bg=COLORS["surface"], fg=COLORS["text"])
         title.pack(side="left", padx=16)
         title.bind("<ButtonPress-1>", self._drag_start)
         title.bind("<B1-Motion>", self._drag_move)
+        title.bind("<ButtonRelease-1>", self._drag_end)
 
         close = tk.Label(bar, text="✕", font=(FONT, 11), bg=COLORS["surface"],
                          fg=COLORS["text_muted"], cursor="hand2", padx=12)
@@ -520,6 +582,9 @@ class PhrasePanel(tk.Toplevel):
     def _drag_move(self, event):
         dx, dy = event.x - self._drag["x"], event.y - self._drag["y"]
         self.geometry(f"+{self.winfo_x() + dx}+{self.winfo_y() + dy}")
+
+    def _drag_end(self, event):
+        self._save_geom()
 
     def _build_search(self):
         wrap = tk.Frame(self, bg=COLORS["surface"], padx=16)
@@ -603,13 +668,20 @@ class PhrasePanel(tk.Toplevel):
             active = cat == self.current_category
 
             def make(parent, cat=cat, active=active):
+                is_all = cat == "전체"
+                if active:
+                    bg = COLORS["accent"] if is_all else COLORS["accent_light"]
+                    fg = "white" if is_all else COLORS["accent"]
+                    hb = COLORS["accent"]
+                else:
+                    bg = COLORS["track"] if is_all else COLORS["surface"]
+                    fg = COLORS["accent"] if is_all else COLORS["text_secondary"]
+                    hb = COLORS["accent"] if is_all else COLORS["border"]
+                font = (FONT, LAYOUT["cat"], "bold") if is_all else (FONT, LAYOUT["cat"])
                 chip = tk.Label(
-                    parent, text=cat, font=(FONT, LAYOUT["cat"]),
-                    bg=COLORS["accent_light"] if active else COLORS["surface"],
-                    fg=COLORS["accent"] if active else COLORS["text_secondary"],
-                    cursor="hand2", padx=8, pady=3,
-                    highlightbackground=COLORS["accent"] if active else COLORS["border"],
-                    highlightthickness=1,
+                    parent, text=cat, font=font, bg=bg, fg=fg,
+                    cursor="hand2", padx=10 if is_all else 8, pady=3,
+                    highlightbackground=hb, highlightthickness=2 if is_all else 1,
                 )
                 chip.bind("<Button-1>", lambda e, c=cat: self._filter_category(c))
                 return chip
@@ -654,6 +726,7 @@ class PhrasePanel(tk.Toplevel):
 
         self.more_menu = tk.Menu(self, tearoff=0)
         self.more_menu.add_command(label="카테고리 관리", command=self._manage_categories)
+        self.more_menu.add_command(label="창 위치·크기 초기화", command=self._reset_geom)
         self.more_menu.add_command(label="가져오기 / 내보내기", command=self._import_export)
 
     def _show_more_menu(self, event):
@@ -892,70 +965,86 @@ class PhrasePanel(tk.Toplevel):
         win.attributes("-topmost", True)
         win.configure(bg=COLORS["surface"], highlightbackground=COLORS["border"],
                       highlightthickness=1)
-        win.geometry(f"320x440+{self.winfo_x() + 30}+{self.winfo_y() + 50}")
+        win.geometry(f"330x460+{self.winfo_x() + 30}+{self.winfo_y() + 50}")
 
         tk.Label(win, text="카테고리 관리", font=(FONT, 12, "bold"), bg=COLORS["surface"],
                  fg=COLORS["text"]).pack(anchor="w", padx=16, pady=(14, 2))
         tk.Frame(win, bg=COLORS["border"], height=1).pack(fill="x")
-        tk.Label(win, text="드래그하여 순서 변경 · 선택 후 삭제", font=(FONT, 9),
-                 bg=COLORS["surface"], fg=COLORS["text_secondary"]).pack(anchor="w", padx=16, pady=(8, 4))
+        tk.Label(win, text="≡ 를 잡고 위·아래로 드래그하여 순서 변경 · 🗑 삭제",
+                 font=(FONT, 9), bg=COLORS["surface"],
+                 fg=COLORS["text_secondary"]).pack(anchor="w", padx=16, pady=(8, 4))
 
-        body = tk.Frame(win, bg=COLORS["surface"], padx=16)
-        body.pack(fill="both", expand=True)
+        listbox = tk.Frame(win, bg=COLORS["surface"], padx=16)
+        listbox.pack(fill="both", expand=True)
 
-        lb = tk.Listbox(body, font=(FONT, 11), activestyle="none", bd=1, relief="solid",
-                        highlightthickness=0, selectbackground=COLORS["accent_light"],
-                        selectforeground=COLORS["accent"], fg=COLORS["text"])
-        lb.pack(fill="both", expand=True, pady=(0, 10))
         cats = self.app.data["categories"]
-        for c in cats:
-            lb.insert(tk.END, c)
+        rows = []
+        drag = {"row": None}
 
-        drag = {"i": None}
-
-        def press(e):
-            drag["i"] = lb.nearest(e.y)
+        def repack():
+            for r in rows:
+                r.pack_forget()
+            for r in rows:
+                r.pack(fill="x", pady=2)
 
         def motion(e):
-            j = drag["i"]
-            i = lb.nearest(e.y)
-            if j is None or i < 0 or i == j:
+            row = drag["row"]
+            if row is None:
                 return
-            cats.insert(i, cats.pop(j))
-            t = lb.get(j)
-            lb.delete(j)
-            lb.insert(i, t)
-            lb.selection_clear(0, tk.END)
-            lb.selection_set(i)
-            drag["i"] = i
+            cur = rows.index(row)
+            target = len(rows) - 1
+            for i, r in enumerate(rows):
+                if e.y_root < r.winfo_rooty() + r.winfo_height() / 2:
+                    target = i
+                    break
+            if target != cur:
+                rows.insert(target, rows.pop(cur))
+                cats.insert(target, cats.pop(cur))
+                repack()
 
         def release(e):
-            save_data(self.app.data)
-            self._rebuild_categories()
+            if drag["row"] is not None:
+                drag["row"] = None
+                save_data(self.app.data)
+                self._rebuild_categories()
 
-        lb.bind("<Button-1>", press)
-        lb.bind("<B1-Motion>", motion)
-        lb.bind("<ButtonRelease-1>", release)
+        def make_row(cat):
+            row = tk.Frame(listbox, bg=COLORS["surface"],
+                           highlightbackground=COLORS["border"], highlightthickness=1)
+            handle = tk.Label(row, text="≡", font=(FONT, 12), bg=COLORS["surface"],
+                              fg=COLORS["text_muted"], cursor="fleur", padx=8, pady=6)
+            handle.pack(side="left")
+            name = tk.Label(row, text=cat, font=(FONT, 11), bg=COLORS["surface"],
+                            fg=COLORS["text"], anchor="w")
+            name.pack(side="left", fill="x", expand=True)
+            dele = tk.Label(row, text="🗑", font=(FONT, 11), bg=COLORS["surface"],
+                            fg=COLORS["danger"], cursor="hand2", padx=10)
+            dele.pack(side="right")
+            dele.bind("<Button-1>", lambda e, c=cat: do_delete(c))
+            for w in (row, handle, name):
+                w.bind("<ButtonPress-1>", lambda e, r=row: drag.__setitem__("row", r))
+                w.bind("<B1-Motion>", motion)
+                w.bind("<ButtonRelease-1>", release)
+            return row
 
-        def refresh():
-            lb.delete(0, tk.END)
-            for c in cats:
-                lb.insert(tk.END, c)
+        def rebuild_rows():
+            for r in rows:
+                r.destroy()
+            rows.clear()
+            for cat in cats:
+                rows.append(make_row(cat))
+            repack()
 
         def do_add():
             name = add_var.get().strip()
             if name and name not in cats:
                 cats.append(name)
                 save_data(self.app.data)
-                refresh()
+                rebuild_rows()
                 self._rebuild_categories()
             add_var.set("")
 
-        def do_delete():
-            sel = lb.curselection()
-            if not sel:
-                return
-            cat = lb.get(sel[0])
+        def do_delete(cat):
             if not messagebox.askyesno(
                     "삭제", f"‘{cat}’ 카테고리를 삭제할까요?\n해당 문장은 ‘일반’으로 옮겨집니다.",
                     parent=win):
@@ -970,12 +1059,14 @@ class PhrasePanel(tk.Toplevel):
             if self.current_category == cat:
                 self.current_category = "전체"
             save_data(self.app.data)
-            refresh()
+            rebuild_rows()
             self._rebuild_categories()
             self._populate()
 
+        rebuild_rows()
+
         add_row = tk.Frame(win, bg=COLORS["surface"], padx=16)
-        add_row.pack(fill="x")
+        add_row.pack(fill="x", pady=(8, 0))
         add_wrap = tk.Frame(add_row, bg=COLORS["surface"], highlightbackground=COLORS["border"],
                             highlightthickness=1)
         add_wrap.pack(side="left", fill="x", expand=True)
@@ -989,13 +1080,11 @@ class PhrasePanel(tk.Toplevel):
 
         btns = tk.Frame(win, bg=COLORS["surface"], padx=16)
         btns.pack(fill="x", pady=12)
-        RoundedButton(btns, text="삭제", command=do_delete, bg_color=COLORS["danger"],
-                      hover_color="#991B1B", width=70, height=32).pack(side="left")
         RoundedButton(btns, text="완료",
                       command=lambda: (save_data(self.app.data), self._rebuild_categories(),
                                        self._populate(), win.destroy()),
                       bg_color=COLORS["accent"], hover_color=COLORS["accent_dark"],
-                      width=70, height=32).pack(side="right")
+                      width=80, height=32).pack(side="right")
         win.focus_force()
 
     def _import_export(self):
