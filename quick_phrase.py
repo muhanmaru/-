@@ -505,7 +505,7 @@ class PhrasePanel(tk.Toplevel):
         track = tk.Frame(wrap, bg=COLORS["track"])
         track.pack(fill="x")
         self.seg_buttons = {}
-        for val, label in [("recent", "최근"), ("all", "전체"), ("frequent", "자주 사용")]:
+        for val, label in [("all", "전체"), ("recent", "최근"), ("frequent", "자주 사용")]:
             b = tk.Label(track, text=label, font=(FONT, LAYOUT["seg"]), bg=COLORS["track"],
                          fg=COLORS["text_secondary"], cursor="hand2", pady=6)
             b.pack(side="left", fill="x", expand=True, padx=3, pady=3)
