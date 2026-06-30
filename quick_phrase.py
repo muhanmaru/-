@@ -433,8 +433,8 @@ class PhrasePanel(tk.Toplevel):
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         geom = master.data.get("panel_geom") or {}
         if all(k in geom for k in ("w", "h", "x", "y")):
-            panel_w = max(300, int(geom["w"]))
-            panel_h = max(360, int(geom["h"]))
+            panel_w = max(LAYOUT["panel_w"], int(geom["w"]))
+            panel_h = max(LAYOUT["panel_h"], int(geom["h"]))
             x = min(max(0, int(geom["x"])), max(0, sw - 120))
             y = min(max(0, int(geom["y"])), max(0, sh - 80))
         else:
@@ -497,15 +497,16 @@ class PhrasePanel(tk.Toplevel):
         x0, y0, ox, oy, ow, oh, dirs = self._ez
         dx, dy = e.x_root - x0, e.y_root - y0
         nx, ny, nw, nh = ox, oy, ow, oh
+        min_w, min_h = LAYOUT["panel_w"], LAYOUT["panel_h"]  # never below base size
         if "r" in dirs:
-            nw = max(300, ow + dx)
+            nw = max(min_w, ow + dx)
         if "b" in dirs:
-            nh = max(360, oh + dy)
+            nh = max(min_h, oh + dy)
         if "l" in dirs:
-            nw = max(300, ow - dx)
+            nw = max(min_w, ow - dx)
             nx = ox + (ow - nw)
         if "t" in dirs:
-            nh = max(360, oh - dy)
+            nh = max(min_h, oh - dy)
             ny = oy + (oh - nh)
         self.geometry(f"{nw}x{nh}+{nx}+{ny}")
 
@@ -1014,7 +1015,7 @@ class PhrasePanel(tk.Toplevel):
         win.configure(bg=COLORS["surface"], highlightbackground=COLORS["border"],
                       highlightthickness=1)
 
-        mw, mh = 220, 320
+        mw, mh = 290, 420
         sw = self.winfo_screenwidth()
         px, py, pw = self.winfo_x(), self.winfo_y(), self.winfo_width()
         x = px + pw + 10                      # prefer the right of the panel
@@ -1027,55 +1028,86 @@ class PhrasePanel(tk.Toplevel):
         # work on a copy; commit on 완료, discard on 취소
         work = list(self.app.data["categories"])
 
-        header = tk.Frame(win, bg=COLORS["surface"], height=26)
+        header = tk.Frame(win, bg=COLORS["surface"], height=32)
         header.pack(fill="x")
         header.pack_propagate(False)
-        title = tk.Label(header, text="카테고리 관리", font=(FONT, 8, "bold"),
+        title = tk.Label(header, text="카테고리 관리", font=(FONT, 10, "bold"),
                          bg=COLORS["surface"], fg=COLORS["text"])
-        title.pack(side="left", padx=10)
-        close = tk.Label(header, text="✕", font=(FONT, 8), bg=COLORS["surface"],
-                         fg=COLORS["text_muted"], cursor="hand2", padx=8)
+        title.pack(side="left", padx=12)
+        close = tk.Label(header, text="✕", font=(FONT, 10), bg=COLORS["surface"],
+                         fg=COLORS["text_muted"], cursor="hand2", padx=10)
         close.pack(side="right")
         close.bind("<Button-1>", lambda e: win.destroy())
         tk.Frame(win, bg=COLORS["border"], height=1).pack(fill="x")
         tk.Label(win, text="≡ 드래그로 순서 변경 · 🗑 삭제",
-                 font=(FONT, 6), bg=COLORS["surface"],
-                 fg=COLORS["text_secondary"]).pack(anchor="w", padx=10, pady=(5, 2))
+                 font=(FONT, 8), bg=COLORS["surface"],
+                 fg=COLORS["text_secondary"]).pack(anchor="w", padx=12, pady=(6, 4))
 
-        listbox = tk.Frame(win, bg=COLORS["surface"], padx=10)
-        listbox.pack(fill="both", expand=True)
+        # bottom bar pinned first so 취소/완료 stay visible at any window size
+        btns = tk.Frame(win, bg=COLORS["surface"], padx=12)
+        btns.pack(side="bottom", fill="x", pady=(6, 10))
+        add_row = tk.Frame(win, bg=COLORS["surface"], padx=12)
+        add_row.pack(side="bottom", fill="x", pady=(4, 0))
 
-        rows = []          # row frames for non-dragged items, in display order
+        # the list fills the space between header and the pinned bottom bar
+        lst = tk.Frame(win, bg=COLORS["surface"])
+        lst.pack(fill="both", expand=True, padx=12)
+
+        order = []          # row frames (non-dragged) in display order
         rowcat = {}
-        dd = {}
+        cur_y, target_y = {}, {}
+        dd = {"rowh": 30}
 
-        def repack():
-            for r in rows:
-                r.pack_forget()
-            for r in rows:
-                r.pack(fill="x", pady=2)
+        def ensure_anim():
+            if not dd.get("anim"):
+                dd["anim"] = True
+                win.after(15, tick)
 
-        def place_gap(target):
-            # Move only the gap among the already-packed rows (no full relayout),
-            # which keeps the reorder smooth instead of flickering.
-            gap = dd["gap"]
-            gap.pack_forget()
-            if target < len(rows):
-                gap.pack(fill="x", pady=2, before=rows[target])
+        def tick():
+            if not win.winfo_exists():
+                return
+            moving = False
+            for r in order:
+                ty = target_y.get(r, 0)
+                cy = cur_y.get(r, ty)
+                ny = cy + (ty - cy) * 0.4
+                if abs(ty - ny) < 0.5:
+                    ny = ty
+                else:
+                    moving = True
+                cur_y[r] = ny
+                try:
+                    r.place_configure(y=int(ny))
+                except Exception:
+                    pass
+            if moving and dd.get("anim"):
+                win.after(15, tick)
             else:
-                gap.pack(fill="x", pady=2)
+                dd["anim"] = False
+
+        def layout(animate=True):
+            gi = dd.get("gap_index")
+            for i, r in enumerate(order):
+                slot = i + (1 if (gi is not None and i >= gi) else 0)
+                target_y[r] = slot * dd["rowh"]
+            if animate:
+                ensure_anim()
+            else:
+                for r in order:
+                    cur_y[r] = target_y[r]
+                    r.place_configure(y=int(target_y[r]))
 
         def make_row(cat):
-            row = tk.Frame(listbox, bg=COLORS["surface"],
+            row = tk.Frame(lst, bg=COLORS["surface"],
                            highlightbackground=COLORS["border"], highlightthickness=1)
-            handle = tk.Label(row, text="≡", font=(FONT, 9), bg=COLORS["surface"],
-                              fg=COLORS["text_muted"], cursor="fleur", padx=6, pady=3)
+            handle = tk.Label(row, text="≡", font=(FONT, 12), bg=COLORS["surface"],
+                              fg=COLORS["text_muted"], cursor="fleur", padx=8, pady=4)
             handle.pack(side="left")
-            name = tk.Label(row, text=cat, font=(FONT, 8), bg=COLORS["surface"],
+            name = tk.Label(row, text=cat, font=(FONT, 10), bg=COLORS["surface"],
                             fg=COLORS["text"], anchor="w")
             name.pack(side="left", fill="x", expand=True)
-            dele = tk.Label(row, text="🗑", font=(FONT, 8), bg=COLORS["surface"],
-                            fg=COLORS["danger"], cursor="hand2", padx=6)
+            dele = tk.Label(row, text="🗑", font=(FONT, 10), bg=COLORS["surface"],
+                            fg=COLORS["danger"], cursor="hand2", padx=8)
             dele.pack(side="right")
             dele.bind("<Button-1>", lambda e, c=cat: do_delete(c))
             rowcat[row] = cat
@@ -1086,13 +1118,21 @@ class PhrasePanel(tk.Toplevel):
             return row
 
         def rebuild_rows():
-            for r in rows:
+            for r in order:
                 r.destroy()
-            rows.clear()
+            order.clear()
             rowcat.clear()
+            cur_y.clear()
+            target_y.clear()
             for cat in work:
-                rows.append(make_row(cat))
-            repack()
+                r = make_row(cat)
+                order.append(r)
+                r.place(x=0, y=0, relwidth=1)
+            win.update_idletasks()
+            if order:
+                dd["rowh"] = order[0].winfo_reqheight() + 6
+            dd["gap_index"] = None
+            layout(animate=False)
 
         def press(e, row):
             dd["pending"] = (e.x_root, e.y_root, row)
@@ -1102,23 +1142,18 @@ class PhrasePanel(tk.Toplevel):
             dd["on"] = True
             cat = rowcat[row]
             dd["cat"] = cat
-            dd["h"] = row.winfo_height() or 26
-            dd["w"] = row.winfo_width() or 200
-            idx = rows.index(row)
-            rows.remove(row)
+            dd["w"] = lst.winfo_width() or 200
+            order.remove(row)
+            row.place_forget()
             row.destroy()
-            gap = tk.Frame(listbox, height=dd["h"], bg=COLORS["accent_light"],
-                           highlightbackground=COLORS["accent"], highlightthickness=1)
-            dd["gap"] = gap
-            dd["gap_index"] = idx
-            place_gap(idx)
-            # floating chip that follows the cursor
-            fl = tk.Label(win, text="≡  " + cat, font=(FONT, 8, "bold"),
+            cur_y.pop(row, None)
+            target_y.pop(row, None)
+            fl = tk.Label(win, text="≡  " + cat, font=(FONT, 10, "bold"),
                           bg=COLORS["surface"], fg=COLORS["text"], anchor="w",
-                          padx=6, pady=3, highlightbackground=COLORS["accent"],
+                          padx=8, pady=4, highlightbackground=COLORS["accent"],
                           highlightthickness=2)
             dd["float"] = fl
-            dd["fx"] = listbox.winfo_x() + 10
+            dd["fx"] = lst.winfo_x()
 
         def motion(e):
             if not dd.get("on"):
@@ -1129,30 +1164,25 @@ class PhrasePanel(tk.Toplevel):
                 if abs(e.x_root - px0) < 4 and abs(e.y_root - py0) < 4:
                     return
                 start(row)
-            # follow with the floating chip (cheap; just a place())
             wy = e.y_root - win.winfo_rooty()
-            dd["float"].place(x=dd["fx"], y=wy - dd["h"] // 2, width=dd["w"])
+            dd["float"].place(x=dd["fx"], y=wy - dd["rowh"] // 2, width=dd["w"])
             dd["float"].lift()
-            # find insertion slot; only move the gap when it actually changes
-            target = len(rows)
-            for i, r in enumerate(rows):
-                if e.y_root < r.winfo_rooty() + r.winfo_height() / 2:
-                    target = i
-                    break
-            if target != dd.get("gap_index"):
-                dd["gap_index"] = target
-                place_gap(target)
+            top = lst.winfo_rooty()
+            gi = int((e.y_root - top) / dd["rowh"] + 0.5)
+            gi = max(0, min(gi, len(order)))
+            if gi != dd.get("gap_index"):
+                dd["gap_index"] = gi
+                layout(animate=True)
 
         def release(e):
             if not dd.get("on"):
                 dd["pending"] = None
                 return
-            target = dd["gap_index"]
+            gi = dd.get("gap_index") or 0
             cat = dd["cat"]
-            others = [rowcat[r] for r in rows]
-            work[:] = others[:target] + [cat] + others[target:]
+            others = [rowcat[r] for r in order]
+            work[:] = others[:gi] + [cat] + others[gi:]
             dd["float"].destroy()
-            dd["gap"].destroy()
             dd["on"] = False
             dd["pending"] = None
             rebuild_rows()
@@ -1186,32 +1216,27 @@ class PhrasePanel(tk.Toplevel):
             self._populate()
             win.destroy()
 
-        rebuild_rows()
-
-        add_row = tk.Frame(win, bg=COLORS["surface"], padx=10)
-        add_row.pack(fill="x", pady=(5, 0))
         add_wrap = tk.Frame(add_row, bg=COLORS["surface"], highlightbackground=COLORS["border"],
                             highlightthickness=1)
         add_wrap.pack(side="left", fill="x", expand=True)
         add_var = tk.StringVar()
-        add_entry = tk.Entry(add_wrap, textvariable=add_var, font=(FONT, 8), bd=0,
+        add_entry = tk.Entry(add_wrap, textvariable=add_var, font=(FONT, 10), bd=0,
                              bg=COLORS["surface"], fg=COLORS["text"])
-        add_entry.pack(fill="x", ipady=3, padx=5)
+        add_entry.pack(fill="x", ipady=4, padx=6)
         add_entry.bind("<Return>", lambda e: do_add())
         RoundedButton(add_row, text="추가", command=do_add, bg_color=COLORS["accent"],
-                      hover_color=COLORS["accent_dark"], width=42, height=24,
-                      font_size=8).pack(side="right", padx=(6, 0))
+                      hover_color=COLORS["accent_dark"], width=52, height=28,
+                      font_size=9).pack(side="right", padx=(8, 0))
 
-        btns = tk.Frame(win, bg=COLORS["surface"], padx=10)
-        btns.pack(fill="x", pady=8)
         RoundedButton(btns, text="취소", command=win.destroy, bg_color=COLORS["hover"],
                       hover_color=COLORS["border"], fg=COLORS["text"],
-                      width=56, height=26, font_size=8).pack(side="left")
+                      width=70, height=30, font_size=10).pack(side="left")
         RoundedButton(btns, text="완료", command=commit, bg_color=COLORS["accent"],
-                      hover_color=COLORS["accent_dark"], width=56, height=26,
-                      font_size=8).pack(side="right")
+                      hover_color=COLORS["accent_dark"], width=70, height=30,
+                      font_size=10).pack(side="right")
 
-        self._attach_window_controls(win, [header, title], min_w=190, min_h=230)
+        rebuild_rows()
+        self._attach_window_controls(win, [header, title], min_w=mw, min_h=mh)
         win.focus_force()
 
     def _import_export(self):
