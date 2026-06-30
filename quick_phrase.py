@@ -27,11 +27,12 @@ COLORS = {
 }
 
 # Layout scale: font sizes (pt) and spacing (px). Tunable in one place.
+# Preset: 09 Narrow — compact width, light density.
 LAYOUT = {
-    "panel_w": 410, "panel_h": 560,
-    "header": 13, "search": 12, "seg": 9, "cat": 8,
-    "text": 12, "meta": 9,
-    "row_padx": 16, "row_pady": 12, "wrap": 256,
+    "panel_w": 344, "panel_h": 560,
+    "header": 12, "search": 11, "seg": 9, "cat": 8,
+    "text": 11, "meta": 8,
+    "row_padx": 14, "row_pady": 11, "wrap": 214,
 }
 
 FONT = "Segoe UI"
@@ -119,6 +120,72 @@ def set_clipboard(text, widget=None):
     return False
 
 
+def get_foreground_window():
+    """Handle of the currently active window (the chart, before we open)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        return ctypes.windll.user32.GetForegroundWindow()
+    except Exception:
+        return None
+
+
+def restore_foreground(hwnd):
+    """Re-activate a captured window so the paste lands in it."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
+def send_paste():
+    """Send Ctrl+V to whatever window currently has focus (Windows only)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        VK_CONTROL, VK_V = 0x11, 0x56
+        KEYEVENTF_KEYUP = 0x0002
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [
+                ("wVk", ctypes.c_ushort),
+                ("wScan", ctypes.c_ushort),
+                ("dwFlags", ctypes.c_ulong),
+                ("time", ctypes.c_ulong),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+            ]
+
+        class INPUT(ctypes.Structure):
+            class _INPUT(ctypes.Union):
+                _fields_ = [("ki", KEYBDINPUT)]
+            _fields_ = [("type", ctypes.c_ulong), ("ii", _INPUT)]
+
+        def key_input(vk, flags=0):
+            inp = INPUT()
+            inp.type = 1
+            inp.ii.ki.wVk = vk
+            inp.ii.ki.dwFlags = flags
+            return inp
+
+        inputs = (INPUT * 4)(
+            key_input(VK_CONTROL),
+            key_input(VK_V),
+            key_input(VK_V, KEYEVENTF_KEYUP),
+            key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+        )
+        ctypes.windll.user32.SendInput(4, ctypes.pointer(inputs[0]), ctypes.sizeof(INPUT))
+    except Exception:
+        pass
+
+
 class RoundedButton(tk.Canvas):
     """A flat, rounded-rectangle button drawn on a canvas."""
 
@@ -162,13 +229,15 @@ class RoundedButton(tk.Canvas):
 class PhraseItem(tk.Frame):
     """A single phrase row: click to copy to the clipboard."""
 
-    def __init__(self, parent, phrase_data, on_use, on_edit, on_delete, **kwargs):
+    def __init__(self, parent, phrase_data, on_use, on_paste, on_edit, on_delete, **kwargs):
         super().__init__(parent, bg=COLORS["surface"], cursor="hand2", **kwargs)
         self.phrase = phrase_data
         self._on_use = on_use
+        self._on_paste = on_paste
         self._on_edit = on_edit
         self._on_delete = on_delete
         self._hovered = False
+        self._click_after = None
 
         self.inner = tk.Frame(self, bg=COLORS["surface"],
                               padx=LAYOUT["row_padx"], pady=LAYOUT["row_pady"])
@@ -214,9 +283,24 @@ class PhraseItem(tk.Frame):
             w.bind("<Enter>", self._hover_in)
             w.bind("<Leave>", self._hover_out)
             w.bind("<Button-1>", self._use_click)
+            w.bind("<Double-1>", self._paste_click)
 
     def _use_click(self, event):
-        self._on_use(self.phrase)
+        # Defer the copy briefly so a double-click can cancel it and paste instead.
+        self._cancel_pending()
+        self._click_after = self.after(200, lambda: self._on_use(self.phrase))
+
+    def _paste_click(self, event):
+        self._cancel_pending()
+        self._on_paste(self.phrase)
+
+    def _cancel_pending(self):
+        if self._click_after is not None:
+            try:
+                self.after_cancel(self._click_after)
+            except Exception:
+                pass
+            self._click_after = None
 
     def _edit_click(self, event):
         self._on_edit(self.phrase)
@@ -502,7 +586,7 @@ class PhrasePanel(tk.Toplevel):
             return
         for p in phrases:
             PhraseItem(self.scroll.scrollable, p,
-                       on_use=self._use_phrase,
+                       on_use=self._use_phrase, on_paste=self._paste_phrase,
                        on_edit=self._edit_phrase, on_delete=self._delete_phrase).pack(fill="x")
 
     def _record_use(self, phrase):
@@ -525,14 +609,30 @@ class PhrasePanel(tk.Toplevel):
         return None
 
     def _use_phrase(self, phrase):
-        # Click = copy to clipboard. The user pastes with Ctrl+V wherever they
-        # want; we never touch window focus, so nothing else moves or closes.
+        # Single click = copy to clipboard only. No focus changes, so nothing
+        # else moves or closes; the user pastes with Ctrl+V where they want.
         ok = set_clipboard(phrase["text"], self)
         self._record_use(phrase)
         item = self._find_item(phrase)
         if item:
             item.flash()
         self._toast("복사됨  ·  Ctrl+V로 붙여넣기" if ok else "복사 실패 — 다시 클릭하세요")
+
+    def _paste_phrase(self, phrase):
+        # Double click = copy and auto-paste into the window that was active
+        # when the panel opened (the chart we captured on open).
+        set_clipboard(phrase["text"], self)
+        self._record_use(phrase)
+        item = self._find_item(phrase)
+        if item:
+            item.flash()
+        hwnd = getattr(self.app, "_target_hwnd", None)
+        if sys.platform == "win32" and hwnd:
+            self._toast("붙여넣었습니다")
+            restore_foreground(hwnd)
+            self.app.after(120, send_paste)
+        else:
+            self._toast("복사됨  ·  Ctrl+V로 붙여넣기")
 
     def _toast(self, msg):
         if self._toast_lbl is not None and self._toast_lbl.winfo_exists():
@@ -732,6 +832,7 @@ class FloatingButton(tk.Tk):
         super().__init__()
         self.data = load_data()
         self.panel = None
+        self._target_hwnd = None
 
         self.title("Quick Phrase")
         self.overrideredirect(True)
@@ -779,9 +880,10 @@ class FloatingButton(tk.Tk):
             GWL_EXSTYLE = -20
             WS_EX_APPWINDOW = 0x00040000
             WS_EX_TOOLWINDOW = 0x00000080
+            WS_EX_NOACTIVATE = 0x08000000
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
             style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW | WS_EX_NOACTIVATE
             ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
             ctypes.windll.user32.SetWindowTextW(hwnd, "Quick Phrase")
             self.withdraw()
@@ -799,11 +901,27 @@ class FloatingButton(tk.Tk):
         finally:
             self.menu.grab_release()
 
+    def _own_hwnd(self):
+        try:
+            import ctypes
+
+            return ctypes.windll.user32.GetParent(self.winfo_id())
+        except Exception:
+            return None
+
+    def _capture_target(self):
+        # Remember the active window (the chart) before opening, so a
+        # double-click can paste straight back into it.
+        hwnd = get_foreground_window()
+        if hwnd and hwnd != self._own_hwnd():
+            self._target_hwnd = hwnd
+
     def _toggle_panel(self):
         if self.panel and self.panel.winfo_exists():
             self.panel.destroy()
             self.panel = None
         else:
+            self._capture_target()
             self.panel = PhrasePanel(self)
 
     def _quit_app(self):
