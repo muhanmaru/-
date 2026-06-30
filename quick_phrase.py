@@ -959,70 +959,123 @@ class PhrasePanel(tk.Toplevel):
                       hover_color=COLORS["border"], fg=COLORS["text"],
                       width=70, height=30).pack(side="right", padx=(0, 8))
 
+    def _attach_window_controls(self, win, drag_widgets, min_w=280, min_h=320):
+        # Make an overrideredirect Toplevel movable (drag the given widgets) and
+        # resizable from any edge/corner.
+        st = {}
+
+        def dstart(e):
+            st["d"] = (e.x_root, e.y_root, win.winfo_x(), win.winfo_y())
+
+        def dmove(e):
+            x0, y0, ox, oy = st["d"]
+            win.geometry(f"+{ox + (e.x_root - x0)}+{oy + (e.y_root - y0)}")
+
+        for w in drag_widgets:
+            w.bind("<ButtonPress-1>", dstart)
+            w.bind("<B1-Motion>", dmove)
+
+        specs = [
+            ("l",  dict(relx=0, rely=0, relheight=1, width=5, anchor="nw"), "left_side"),
+            ("r",  dict(relx=1, rely=0, relheight=1, width=5, anchor="ne"), "right_side"),
+            ("t",  dict(relx=0, rely=0, relwidth=1, height=5, anchor="nw"), "top_side"),
+            ("b",  dict(relx=0, rely=1, relwidth=1, height=5, anchor="sw"), "bottom_side"),
+            ("bl", dict(relx=0, rely=1, width=11, height=11, anchor="sw"), "bottom_left_corner"),
+            ("br", dict(relx=1, rely=1, width=14, height=14, anchor="se"), "bottom_right_corner"),
+        ]
+
+        def epress(e, dirs):
+            st["e"] = (e.x_root, e.y_root, win.winfo_x(), win.winfo_y(),
+                       win.winfo_width(), win.winfo_height(), dirs)
+
+        def edrag(e):
+            x0, y0, ox, oy, ow, oh, dirs = st["e"]
+            dx, dy = e.x_root - x0, e.y_root - y0
+            nx, ny, nw, nh = ox, oy, ow, oh
+            if "r" in dirs:
+                nw = max(min_w, ow + dx)
+            if "b" in dirs:
+                nh = max(min_h, oh + dy)
+            if "l" in dirs:
+                nw = max(min_w, ow - dx)
+                nx = ox + (ow - nw)
+            win.geometry(f"{nw}x{nh}+{nx}+{ny}")
+
+        for dirs, place_kw, cursor in specs:
+            h = tk.Frame(win, bg=COLORS["surface"], cursor=cursor)
+            h.place(**place_kw)
+            h.bind("<ButtonPress-1>", lambda e, d=dirs: epress(e, d))
+            h.bind("<B1-Motion>", edrag)
+
     def _manage_categories(self):
         win = tk.Toplevel(self)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=COLORS["surface"], highlightbackground=COLORS["border"],
                       highlightthickness=1)
-        win.geometry(f"330x460+{self.winfo_x() + 30}+{self.winfo_y() + 50}")
 
-        tk.Label(win, text="카테고리 관리", font=(FONT, 12, "bold"), bg=COLORS["surface"],
-                 fg=COLORS["text"]).pack(anchor="w", padx=16, pady=(14, 2))
+        mw, mh = 340, 470
+        sw = self.winfo_screenwidth()
+        px, py, pw = self.winfo_x(), self.winfo_y(), self.winfo_width()
+        x = px + pw + 10                      # prefer the right of the panel
+        if x + mw > sw:                       # no room on the right -> left
+            x = px - mw - 10
+            if x < 0:
+                x = max(0, sw - mw)
+        win.geometry(f"{mw}x{mh}+{x}+{py}")
+
+        # work on a copy; commit on 완료, discard on 취소
+        work = list(self.app.data["categories"])
+
+        header = tk.Frame(win, bg=COLORS["surface"], height=42)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        title = tk.Label(header, text="카테고리 관리", font=(FONT, 12, "bold"),
+                         bg=COLORS["surface"], fg=COLORS["text"])
+        title.pack(side="left", padx=16)
+        close = tk.Label(header, text="✕", font=(FONT, 11), bg=COLORS["surface"],
+                         fg=COLORS["text_muted"], cursor="hand2", padx=12)
+        close.pack(side="right")
+        close.bind("<Button-1>", lambda e: win.destroy())
         tk.Frame(win, bg=COLORS["border"], height=1).pack(fill="x")
-        tk.Label(win, text="≡ 를 잡고 위·아래로 드래그하여 순서 변경 · 🗑 삭제",
+        tk.Label(win, text="≡ 를 잡고 드래그하여 순서 변경 · 🗑 삭제",
                  font=(FONT, 9), bg=COLORS["surface"],
                  fg=COLORS["text_secondary"]).pack(anchor="w", padx=16, pady=(8, 4))
 
         listbox = tk.Frame(win, bg=COLORS["surface"], padx=16)
         listbox.pack(fill="both", expand=True)
 
-        cats = self.app.data["categories"]
-        rows = []
-        drag = {"row": None}
+        rows = []          # row frames for non-dragged items, in display order
+        rowcat = {}
+        dd = {}
 
-        def repack():
+        def repack(gap=None, gap_index=None):
             for r in rows:
                 r.pack_forget()
-            for r in rows:
-                r.pack(fill="x", pady=2)
-
-        def motion(e):
-            row = drag["row"]
-            if row is None:
-                return
-            cur = rows.index(row)
-            target = len(rows) - 1
-            for i, r in enumerate(rows):
-                if e.y_root < r.winfo_rooty() + r.winfo_height() / 2:
-                    target = i
-                    break
-            if target != cur:
-                rows.insert(target, rows.pop(cur))
-                cats.insert(target, cats.pop(cur))
-                repack()
-
-        def release(e):
-            if drag["row"] is not None:
-                drag["row"] = None
-                save_data(self.app.data)
-                self._rebuild_categories()
+            if gap is not None:
+                gap.pack_forget()
+            for i in range(len(rows) + 1):
+                if gap is not None and i == gap_index:
+                    gap.pack(fill="x", pady=3)
+                if i < len(rows):
+                    rows[i].pack(fill="x", pady=3)
 
         def make_row(cat):
             row = tk.Frame(listbox, bg=COLORS["surface"],
                            highlightbackground=COLORS["border"], highlightthickness=1)
-            handle = tk.Label(row, text="≡", font=(FONT, 12), bg=COLORS["surface"],
-                              fg=COLORS["text_muted"], cursor="fleur", padx=8, pady=6)
+            handle = tk.Label(row, text="≡", font=(FONT, 13), bg=COLORS["surface"],
+                              fg=COLORS["text_muted"], cursor="fleur", padx=10, pady=7)
             handle.pack(side="left")
             name = tk.Label(row, text=cat, font=(FONT, 11), bg=COLORS["surface"],
                             fg=COLORS["text"], anchor="w")
             name.pack(side="left", fill="x", expand=True)
             dele = tk.Label(row, text="🗑", font=(FONT, 11), bg=COLORS["surface"],
-                            fg=COLORS["danger"], cursor="hand2", padx=10)
+                            fg=COLORS["danger"], cursor="hand2", padx=12)
             dele.pack(side="right")
             dele.bind("<Button-1>", lambda e, c=cat: do_delete(c))
+            rowcat[row] = cat
             for w in (row, handle, name):
-                w.bind("<ButtonPress-1>", lambda e, r=row: drag.__setitem__("row", r))
+                w.bind("<ButtonPress-1>", lambda e, r=row: press(e, r))
                 w.bind("<B1-Motion>", motion)
                 w.bind("<ButtonRelease-1>", release)
             return row
@@ -1031,37 +1084,101 @@ class PhrasePanel(tk.Toplevel):
             for r in rows:
                 r.destroy()
             rows.clear()
-            for cat in cats:
+            rowcat.clear()
+            for cat in work:
                 rows.append(make_row(cat))
             repack()
 
+        def press(e, row):
+            dd["pending"] = (e.x_root, e.y_root, row)
+            dd["on"] = False
+
+        def start(row):
+            dd["on"] = True
+            cat = rowcat[row]
+            dd["cat"] = cat
+            dd["h"] = row.winfo_height() or 36
+            dd["w"] = row.winfo_width() or 280
+            idx = rows.index(row)
+            rows.remove(row)
+            row.destroy()
+            gap = tk.Frame(listbox, height=dd["h"], bg=COLORS["accent_light"],
+                           highlightbackground=COLORS["accent"], highlightthickness=1)
+            dd["gap"] = gap
+            dd["gap_index"] = idx
+            # floating chip that follows the cursor
+            fl = tk.Label(win, text="≡   " + cat, font=(FONT, 11, "bold"),
+                          bg=COLORS["surface"], fg=COLORS["text"], anchor="w",
+                          padx=12, pady=7, highlightbackground=COLORS["accent"],
+                          highlightthickness=2)
+            dd["float"] = fl
+            dd["fx"] = listbox.winfo_x() + 16
+
+        def motion(e):
+            if not dd.get("on"):
+                p = dd.get("pending")
+                if not p:
+                    return
+                px0, py0, row = p
+                if abs(e.x_root - px0) < 4 and abs(e.y_root - py0) < 4:
+                    return
+                start(row)
+            # follow with the floating chip
+            wy = e.y_root - win.winfo_rooty()
+            dd["float"].place(x=dd["fx"], y=wy - dd["h"] // 2, width=dd["w"])
+            dd["float"].lift()
+            # find insertion slot and open the gap there
+            target = len(rows)
+            for i, r in enumerate(rows):
+                if e.y_root < r.winfo_rooty() + r.winfo_height() / 2:
+                    target = i
+                    break
+            if target != dd.get("gap_index"):
+                dd["gap_index"] = target
+                repack(dd["gap"], target)
+
+        def release(e):
+            if not dd.get("on"):
+                dd["pending"] = None
+                return
+            target = dd["gap_index"]
+            cat = dd["cat"]
+            others = [rowcat[r] for r in rows]
+            work[:] = others[:target] + [cat] + others[target:]
+            dd["float"].destroy()
+            dd["gap"].destroy()
+            dd["on"] = False
+            dd["pending"] = None
+            rebuild_rows()
+
         def do_add():
             name = add_var.get().strip()
-            if name and name not in cats:
-                cats.append(name)
-                save_data(self.app.data)
+            if name and name not in work:
+                work.append(name)
                 rebuild_rows()
-                self._rebuild_categories()
             add_var.set("")
 
         def do_delete(cat):
-            if not messagebox.askyesno(
-                    "삭제", f"‘{cat}’ 카테고리를 삭제할까요?\n해당 문장은 ‘일반’으로 옮겨집니다.",
-                    parent=win):
-                return
-            if cat in cats:
-                cats.remove(cat)
-            if "일반" not in cats:
-                cats.insert(0, "일반")
+            if cat in work:
+                work.remove(cat)
+            rebuild_rows()
+
+        def commit():
+            final = list(work)
+            need_default = False
             for p in self.app.data["phrases"]:
-                if p.get("category") == cat:
+                if p.get("category") not in final:
                     p["category"] = "일반"
-            if self.current_category == cat:
+                    need_default = True
+            if need_default and "일반" not in final:
+                final.insert(0, "일반")
+            self.app.data["categories"] = final
+            if self.current_category not in (["전체"] + final):
                 self.current_category = "전체"
             save_data(self.app.data)
-            rebuild_rows()
             self._rebuild_categories()
             self._populate()
+            win.destroy()
 
         rebuild_rows()
 
@@ -1080,11 +1197,13 @@ class PhrasePanel(tk.Toplevel):
 
         btns = tk.Frame(win, bg=COLORS["surface"], padx=16)
         btns.pack(fill="x", pady=12)
-        RoundedButton(btns, text="완료",
-                      command=lambda: (save_data(self.app.data), self._rebuild_categories(),
-                                       self._populate(), win.destroy()),
-                      bg_color=COLORS["accent"], hover_color=COLORS["accent_dark"],
-                      width=80, height=32).pack(side="right")
+        RoundedButton(btns, text="취소", command=win.destroy, bg_color=COLORS["hover"],
+                      hover_color=COLORS["border"], fg=COLORS["text"],
+                      width=78, height=32).pack(side="left")
+        RoundedButton(btns, text="완료", command=commit, bg_color=COLORS["accent"],
+                      hover_color=COLORS["accent_dark"], width=78, height=32).pack(side="right")
+
+        self._attach_window_controls(win, [header, title], min_w=300, min_h=360)
         win.focus_force()
 
     def _import_export(self):
