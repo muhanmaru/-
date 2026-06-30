@@ -739,14 +739,21 @@ class PhrasePanel(tk.Toplevel):
                         p["text"], p["category"] = txt, cat
                         break
             else:
+                new_id = str(uuid.uuid4())[:8]
                 self.app.data["phrases"].append(
-                    {"id": str(uuid.uuid4())[:8], "text": txt, "category": cat, "use_count": 0})
+                    {"id": new_id, "text": txt, "category": cat, "use_count": 0})
+                # A newly added phrase counts as "recent" too, so it shows up
+                # under 최근 right away.
+                recent = self.app.data["recent_ids"]
+                if new_id in recent:
+                    recent.remove(new_id)
+                recent.insert(0, new_id)
+                self.app.data["recent_ids"] = recent[:RECENT_MAX]
             save_data(self.app.data)
             win.destroy()
             if not phrase:
-                # Show the newly added phrase right away (it has no recent/usage
-                # history, so move off filters that would hide it).
-                self.current_tab = "all"
+                # Land on 최근 with no filters so the new phrase is visible.
+                self.current_tab = "recent"
                 self.current_category = "전체"
                 self.search_var.set("")
                 self._highlight_segment()
