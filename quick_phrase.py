@@ -385,7 +385,11 @@ class ScrollableFrame(tk.Frame):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
         self.canvas = tk.Canvas(self, bg=COLORS["surface"], highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scrollbar = tk.Scrollbar(
+            self, orient="vertical", command=self.canvas.yview, width=14,
+            troughcolor=COLORS["track"], bg=COLORS["border"],
+            activebackground=COLORS["text_muted"], relief="flat",
+            borderwidth=0, highlightthickness=0)
         self.scrollable = tk.Frame(self.canvas, bg=COLORS["surface"])
 
         self.scrollable.bind("<Configure>",
@@ -436,6 +440,7 @@ class PhrasePanel(tk.Toplevel):
         self.geometry(f"{panel_w}x{panel_h}+{x}+{y}")
 
         self._drag = {"x": 0, "y": 0}
+        self._panel_w = panel_w
         self.current_tab = "recent" if master.data.get("recent_ids") else "all"
         self.current_category = "전체"
         self._toast_lbl = None
@@ -447,7 +452,31 @@ class PhrasePanel(tk.Toplevel):
         self._build_list()
         self._build_footer()
         self._populate()
+        self._add_resize_grip()
         self.after(10, self._grab_focus)
+
+    def _add_resize_grip(self):
+        grip = tk.Label(self, text="◢", font=(FONT, 9), bg=COLORS["surface"],
+                        fg=COLORS["text_muted"], cursor="bottom_right_corner")
+        grip.place(relx=1.0, rely=1.0, x=-2, y=-2, anchor="se")
+        grip.bind("<ButtonPress-1>", self._resize_start)
+        grip.bind("<B1-Motion>", self._resize_move)
+        grip.bind("<ButtonRelease-1>", self._resize_end)
+
+    def _resize_start(self, e):
+        self._rs = (e.x_root, e.y_root, self.winfo_width(), self.winfo_height())
+
+    def _resize_move(self, e):
+        x0, y0, w0, h0 = self._rs
+        nw = max(300, w0 + (e.x_root - x0))
+        nh = max(360, h0 + (e.y_root - y0))
+        self.geometry(f"{nw}x{nh}")
+
+    def _resize_end(self, e):
+        self._panel_w = self.winfo_width()
+        LAYOUT["wrap"] = max(160, self._panel_w - 96)
+        self._rebuild_categories()
+        self._populate()
 
     def _grab_focus(self):
         try:
@@ -548,26 +577,54 @@ class PhrasePanel(tk.Toplevel):
         self._rebuild_categories()
 
     def _rebuild_categories(self):
+        # Lay chips out in wrapping rows so the "+" button is always reachable
+        # even when there are many categories on a narrow window.
         for w in self.cat_frame.winfo_children():
             w.destroy()
+        import tkinter.font as tkfont
+        f = tkfont.Font(family=FONT, size=LAYOUT["cat"])
+        avail = max(220, (self._panel_w or LAYOUT["panel_w"]) - 34)
+
+        state = {"row": None, "used": 0}
+
+        def new_row():
+            state["row"] = tk.Frame(self.cat_frame, bg=COLORS["surface"])
+            state["row"].pack(fill="x", anchor="w")
+            state["used"] = 0
+
+        def place(text, factory):
+            cw = f.measure(text) + 22
+            if state["row"] is None or (state["used"] + cw > avail and state["used"] > 0):
+                new_row()
+            factory(state["row"]).pack(side="left", padx=2, pady=2)
+            state["used"] += cw
+
         for cat in ["전체"] + self.app.data["categories"]:
             active = cat == self.current_category
-            chip = tk.Label(
-                self.cat_frame, text=cat, font=(FONT, LAYOUT["cat"]),
-                bg=COLORS["accent_light"] if active else COLORS["surface"],
-                fg=COLORS["accent"] if active else COLORS["text_secondary"],
-                cursor="hand2", padx=8, pady=3,
-                highlightbackground=COLORS["accent"] if active else COLORS["border"],
-                highlightthickness=1,
-            )
-            chip.pack(side="left", padx=2)
-            chip.bind("<Button-1>", lambda e, c=cat: self._filter_category(c))
-        add = tk.Label(self.cat_frame, text="+", font=(FONT, LAYOUT["cat"] + 1, "bold"),
-                       bg=COLORS["surface"], fg=COLORS["text_muted"], cursor="hand2",
-                       padx=7, pady=2, highlightbackground=COLORS["border"],
-                       highlightthickness=1)
-        add.pack(side="left", padx=2)
-        add.bind("<Button-1>", lambda e: self._add_category())
+
+            def make(parent, cat=cat, active=active):
+                chip = tk.Label(
+                    parent, text=cat, font=(FONT, LAYOUT["cat"]),
+                    bg=COLORS["accent_light"] if active else COLORS["surface"],
+                    fg=COLORS["accent"] if active else COLORS["text_secondary"],
+                    cursor="hand2", padx=8, pady=3,
+                    highlightbackground=COLORS["accent"] if active else COLORS["border"],
+                    highlightthickness=1,
+                )
+                chip.bind("<Button-1>", lambda e, c=cat: self._filter_category(c))
+                return chip
+
+            place(cat, make)
+
+        def make_add(parent):
+            add = tk.Label(parent, text="＋", font=(FONT, LAYOUT["cat"] + 1, "bold"),
+                           bg=COLORS["surface"], fg=COLORS["text_muted"], cursor="hand2",
+                           padx=7, pady=2, highlightbackground=COLORS["border"],
+                           highlightthickness=1)
+            add.bind("<Button-1>", lambda e: self._add_category())
+            return add
+
+        place("＋", make_add)
 
     def _filter_category(self, cat):
         self.current_category = cat
