@@ -432,6 +432,14 @@ class PhrasePanel(tk.Toplevel):
         self._build_list()
         self._build_footer()
         self._populate()
+        self.after(10, self._grab_focus)
+
+    def _grab_focus(self):
+        try:
+            self.focus_force()
+            self.search_entry.focus_set()
+        except Exception:
+            pass
 
     def _build_header(self):
         bar = tk.Frame(self, bg=COLORS["surface"], height=46)
@@ -735,6 +743,13 @@ class PhrasePanel(tk.Toplevel):
                     {"id": str(uuid.uuid4())[:8], "text": txt, "category": cat, "use_count": 0})
             save_data(self.app.data)
             win.destroy()
+            if not phrase:
+                # Show the newly added phrase right away (it has no recent/usage
+                # history, so move off filters that would hide it).
+                self.current_tab = "all"
+                self.current_category = "전체"
+                self.search_var.set("")
+                self._highlight_segment()
             self._rebuild_categories()
             self._populate()
 
@@ -743,6 +758,7 @@ class PhrasePanel(tk.Toplevel):
         RoundedButton(btns, text="취소", command=win.destroy, bg_color=COLORS["hover"],
                       hover_color=COLORS["border"], fg=COLORS["text"],
                       width=84, height=32).pack(side="right", padx=(0, 8))
+        win.focus_force()
         tbox.focus_set()
 
     def _delete_phrase(self, phrase):
@@ -770,6 +786,7 @@ class PhrasePanel(tk.Toplevel):
         entry = tk.Entry(wrap, textvariable=var, font=(FONT, 11), bd=0,
                          bg=COLORS["surface"], fg=COLORS["text"])
         entry.pack(fill="x", ipady=6, padx=6)
+        win.focus_force()
         entry.focus_set()
 
         def add():
@@ -897,6 +914,26 @@ class FloatingButton(tk.Tk):
         self.menu.add_command(label="종료", command=self._quit_app)
 
         self.after(10, self._set_appwindow)
+        self.after(400, self._poll_foreground)
+
+    def _poll_foreground(self):
+        # Continuously remember the last real (other-process) window the user
+        # was in — that's where a double-click should paste (chart, Notepad…).
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                u = ctypes.windll.user32
+                k = ctypes.windll.kernel32
+                hwnd = u.GetForegroundWindow()
+                if hwnd:
+                    pid = ctypes.c_ulong()
+                    u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                    if pid.value != k.GetCurrentProcessId():
+                        self._target_hwnd = hwnd
+            except Exception:
+                pass
+        self.after(250, self._poll_foreground)
 
     def _draw(self, color):
         s = self.size
@@ -914,10 +951,9 @@ class FloatingButton(tk.Tk):
             GWL_EXSTYLE = -20
             WS_EX_APPWINDOW = 0x00040000
             WS_EX_TOOLWINDOW = 0x00000080
-            WS_EX_NOACTIVATE = 0x08000000
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
             style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW | WS_EX_NOACTIVATE
+            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
             ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
             ctypes.windll.user32.SetWindowTextW(hwnd, "Quick Phrase")
             self.withdraw()
@@ -935,27 +971,11 @@ class FloatingButton(tk.Tk):
         finally:
             self.menu.grab_release()
 
-    def _own_hwnd(self):
-        try:
-            import ctypes
-
-            return ctypes.windll.user32.GetParent(self.winfo_id())
-        except Exception:
-            return None
-
-    def _capture_target(self):
-        # Remember the active window (the chart) before opening, so a
-        # double-click can paste straight back into it.
-        hwnd = get_foreground_window()
-        if hwnd and hwnd != self._own_hwnd():
-            self._target_hwnd = hwnd
-
     def _toggle_panel(self):
         if self.panel and self.panel.winfo_exists():
             self.panel.destroy()
             self.panel = None
         else:
-            self._capture_target()
             self.panel = PhrasePanel(self)
 
     def _quit_app(self):
