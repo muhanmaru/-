@@ -13,3 +13,8 @@ panel_preview*.png
 *.png
 shot.py
 t.py
+render_themes.py
+render_layouts.py
+render_*.py
+themes/
+layouts/
