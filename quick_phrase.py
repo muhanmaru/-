@@ -694,7 +694,7 @@ class PhrasePanel(tk.Toplevel):
                            bg=COLORS["surface"], fg=COLORS["text_muted"], cursor="hand2",
                            padx=7, pady=2, highlightbackground=COLORS["border"],
                            highlightthickness=1)
-            add.bind("<Button-1>", lambda e: self._add_category())
+            add.bind("<Button-1>", lambda e: self._manage_categories())
             return add
 
         place("＋", make_add)
@@ -1144,10 +1144,10 @@ class PhrasePanel(tk.Toplevel):
             dd["cat"] = cat
             dd["w"] = lst.winfo_width() or 200
             order.remove(row)
-            row.place_forget()
-            row.destroy()
-            cur_y.pop(row, None)
+            row.place_forget()      # hide but keep alive so the mouse grab on it
+            cur_y.pop(row, None)    # keeps delivering motion/release to our handlers
             target_y.pop(row, None)
+            dd["dragrow"] = row
             fl = tk.Label(win, text="≡  " + cat, font=(FONT, 10, "bold"),
                           bg=COLORS["surface"], fg=COLORS["text"], anchor="w",
                           padx=8, pady=4, highlightbackground=COLORS["accent"],
@@ -1183,6 +1183,9 @@ class PhrasePanel(tk.Toplevel):
             others = [rowcat[r] for r in order]
             work[:] = others[:gi] + [cat] + others[gi:]
             dd["float"].destroy()
+            dr = dd.pop("dragrow", None)
+            if dr is not None:
+                dr.destroy()
             dd["on"] = False
             dd["pending"] = None
             rebuild_rows()
