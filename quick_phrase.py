@@ -1493,7 +1493,7 @@ class FloatingButton(tk.Tk):
         self.canvas.bind("<Enter>", lambda e: self._draw(COLORS["accent_dark"]))
         self.canvas.bind("<Leave>", lambda e: self._draw(COLORS["accent"]))
 
-        self._dd = {"x": 0, "y": 0, "moved": False}
+        self._dd = {"x": 0, "y": 0, "moved": False, "pressed": False}
 
         self.menu = tk.Menu(self, tearoff=0)
         self.menu.add_command(label="열기 / 닫기", command=self._toggle_panel)
@@ -1573,16 +1573,28 @@ class FloatingButton(tk.Tk):
             self.destroy()
 
     def _press(self, event):
-        self._dd["x"], self._dd["y"], self._dd["moved"] = event.x, event.y, False
+        self._dd["x"], self._dd["y"] = event.x, event.y
+        self._dd["moved"] = False
+        self._dd["pressed"] = True   # a real press started on the marker
 
     def _drag(self, event):
+        if not self._dd.get("pressed"):
+            return
         dx, dy = event.x - self._dd["x"], event.y - self._dd["y"]
         if abs(dx) > 3 or abs(dy) > 3:
             self._dd["moved"] = True
         self.geometry(f"+{self.winfo_x() + dx}+{self.winfo_y() + dy}")
 
     def _release(self, event):
-        if not self._dd["moved"]:
+        # Only toggle on a genuine click: it must have started with a press on the
+        # marker, not moved, and end with the pointer still over the marker.
+        pressed = self._dd.get("pressed", False)
+        self._dd["pressed"] = False
+        if not pressed or self._dd["moved"]:
+            return
+        x, y = self.winfo_pointerxy()
+        wx, wy = self.winfo_rootx(), self.winfo_rooty()
+        if wx <= x <= wx + self.size and wy <= y <= wy + self.size:
             self._toggle_panel()
 
 
