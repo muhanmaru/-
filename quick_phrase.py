@@ -725,6 +725,7 @@ class PhrasePanel(tk.Toplevel):
 
         self.more_menu = tk.Menu(self, tearoff=0)
         self.more_menu.add_command(label="카테고리 관리", command=self._manage_categories)
+        self.more_menu.add_command(label="글꼴 선택", command=self._choose_font)
         self.more_menu.add_command(label="창 위치·크기 초기화", command=self._reset_geom)
         self.more_menu.add_command(label="가져오기 / 내보내기", command=self._import_export)
 
@@ -1277,6 +1278,117 @@ class PhrasePanel(tk.Toplevel):
         self._attach_window_controls(win, [header, title], min_w=mw, min_h=mh)
         win.focus_force()
 
+    def _choose_font(self):
+        import tkinter.font as tkfont
+
+        win = tk.Toplevel(self)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg=COLORS["surface"], highlightbackground=COLORS["border"],
+                      highlightthickness=1)
+        mw, mh = 300, 440
+        sw = self.winfo_screenwidth()
+        px, py, pw = self.winfo_x(), self.winfo_y(), self.winfo_width()
+        x = px + pw + 10
+        if x + mw > sw:
+            x = px - mw - 10
+            if x < 0:
+                x = max(0, sw - mw)
+        win.geometry(f"{mw}x{mh}+{x}+{py}")
+
+        header = tk.Frame(win, bg=COLORS["surface"], height=32)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        htitle = tk.Label(header, text="글꼴 선택", font=(FONT, 10, "bold"),
+                          bg=COLORS["surface"], fg=COLORS["text"])
+        htitle.pack(side="left", padx=12)
+        hclose = tk.Label(header, text="✕", font=(FONT, 10), bg=COLORS["surface"],
+                          fg=COLORS["text_muted"], cursor="hand2", padx=10)
+        hclose.pack(side="right")
+        hclose.bind("<Button-1>", lambda e: win.destroy())
+        tk.Frame(win, bg=COLORS["border"], height=1).pack(fill="x")
+
+        cur = self.app.data.get("font", FONT)
+
+        # pinned bottom: buttons + preview
+        btns = tk.Frame(win, bg=COLORS["surface"], padx=12)
+        btns.pack(side="bottom", fill="x", pady=(6, 10))
+        preview = tk.Label(win, text="가나다 ABC 123  특이사항 없음",
+                           font=(cur, 13), bg=COLORS["bg"], fg=COLORS["text"],
+                           anchor="w", padx=10, pady=10)
+        preview.pack(side="bottom", fill="x", padx=12, pady=(4, 6))
+
+        # search + list
+        sbox = tk.Frame(win, bg=COLORS["surface"], highlightbackground=COLORS["border"],
+                        highlightthickness=1)
+        sbox.pack(fill="x", padx=12, pady=(8, 6))
+        svar = tk.StringVar()
+        tk.Entry(sbox, textvariable=svar, font=(FONT, 10), bd=0,
+                 bg=COLORS["surface"], fg=COLORS["text"]).pack(fill="x", ipady=4, padx=6)
+
+        lwrap = tk.Frame(win, bg=COLORS["surface"], padx=12)
+        lwrap.pack(fill="both", expand=True)
+        sb = tk.Scrollbar(lwrap, width=14, troughcolor=COLORS["track"],
+                          bg=COLORS["border"], relief="flat", borderwidth=0,
+                          highlightthickness=0)
+        sb.pack(side="right", fill="y")
+        lb = tk.Listbox(lwrap, font=(FONT, 10), activestyle="none", bd=1, relief="solid",
+                        highlightthickness=0, selectbackground=COLORS["accent_light"],
+                        selectforeground=COLORS["accent"], fg=COLORS["text"],
+                        yscrollcommand=sb.set)
+        lb.pack(side="left", fill="both", expand=True)
+        sb.config(command=lb.yview)
+
+        fams = sorted({f for f in tkfont.families() if f and not f.startswith("@")})
+
+        def fill(flt=""):
+            lb.delete(0, tk.END)
+            flt = flt.lower()
+            for f in fams:
+                if not flt or flt in f.lower():
+                    lb.insert(tk.END, f)
+            # keep current selected/visible
+            for i in range(lb.size()):
+                if lb.get(i) == cur:
+                    lb.selection_clear(0, tk.END)
+                    lb.selection_set(i)
+                    lb.see(i)
+                    break
+
+        def on_sel(e=None):
+            sel = lb.get(lb.curselection()[0]) if lb.curselection() else cur
+            preview.configure(font=(sel, 13))
+
+        lb.bind("<<ListboxSelect>>", on_sel)
+        svar.trace_add("write", lambda *a: fill(svar.get()))
+        fill()
+
+        def apply():
+            global FONT
+            sel = lb.get(lb.curselection()[0]) if lb.curselection() else cur
+            self.app.data["font"] = sel
+            save_data(self.app.data)
+            FONT = sel
+            app = self.app
+            win.destroy()
+            try:
+                app._draw(COLORS["accent"])
+            except Exception:
+                pass
+            if app.panel and app.panel.winfo_exists():
+                app.panel.destroy()
+            app.panel = PhrasePanel(app)
+
+        RoundedButton(btns, text="취소", command=win.destroy, bg_color=COLORS["hover"],
+                      hover_color=COLORS["border"], fg=COLORS["text"],
+                      width=70, height=30, font_size=10).pack(side="left")
+        RoundedButton(btns, text="적용", command=apply, bg_color=COLORS["accent"],
+                      hover_color=COLORS["accent_dark"], width=70, height=30,
+                      font_size=10).pack(side="right")
+
+        self._attach_window_controls(win, [header, htitle], min_w=mw, min_h=mh)
+        win.focus_force()
+
     def _import_export(self):
         win = tk.Toplevel(self)
         win.overrideredirect(True)
@@ -1346,6 +1458,10 @@ class FloatingButton(tk.Tk):
         self.data = load_data()
         self.panel = None
         self._target_hwnd = None
+
+        global FONT
+        if self.data.get("font"):
+            FONT = self.data["font"]
 
         self.title("Quick Phrase")
         self.overrideredirect(True)
