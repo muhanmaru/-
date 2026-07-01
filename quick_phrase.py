@@ -837,39 +837,65 @@ class PhrasePanel(tk.Toplevel):
         win.attributes("-topmost", True)
         win.configure(bg=COLORS["surface"], highlightbackground=COLORS["border"],
                       highlightthickness=1)
-        w, h = 420, 300
-        win.geometry(f"{w}x{h}+{self.winfo_x() + 20}+{self.winfo_y() + 70}")
+        base_w, base_h = 420, 300
+        geom = self.app.data.get("editor_geom") or {}
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        if all(k in geom for k in ("w", "h", "x", "y")):
+            w = max(base_w, int(geom["w"]))
+            h = max(base_h, int(geom["h"]))
+            x = min(max(0, int(geom["x"])), max(0, sw - 120))
+            y = min(max(0, int(geom["y"])), max(0, sh - 80))
+        else:
+            w, h = base_w, base_h
+            x, y = self.winfo_x() + 20, self.winfo_y() + 70
+        win.geometry(f"{w}x{h}+{x}+{y}")
 
-        head = tk.Frame(win, bg=COLORS["surface"], height=44)
+        def save_geom():
+            try:
+                self.app.data["editor_geom"] = {
+                    "w": win.winfo_width(), "h": win.winfo_height(),
+                    "x": win.winfo_x(), "y": win.winfo_y()}
+                save_data(self.app.data)
+            except Exception:
+                pass
+
+        head = tk.Frame(win, bg=COLORS["surface"], height=40)
         head.pack(fill="x")
         head.pack_propagate(False)
-        tk.Label(head, text="문장 편집" if phrase else "새 문장 추가",
-                 font=(FONT, 12, "bold"), bg=COLORS["surface"],
-                 fg=COLORS["text"]).pack(side="left", padx=16)
+        htitle = tk.Label(head, text="문장 편집" if phrase else "새 문장 추가",
+                          font=(FONT, 12, "bold"), bg=COLORS["surface"], fg=COLORS["text"])
+        htitle.pack(side="left", padx=16)
+        hclose = tk.Label(head, text="✕", font=(FONT, 11), bg=COLORS["surface"],
+                          fg=COLORS["text_muted"], cursor="hand2", padx=12)
+        hclose.pack(side="right")
+        hclose.bind("<Button-1>", lambda e: win.destroy())
         tk.Frame(win, bg=COLORS["border"], height=1).pack(fill="x")
 
         body = tk.Frame(win, bg=COLORS["surface"], padx=16, pady=14)
         body.pack(fill="both", expand=True)
 
+        # buttons + category pinned to the bottom; text area fills the rest
+        btns = tk.Frame(body, bg=COLORS["surface"])
+        btns.pack(side="bottom", fill="x", pady=(12, 0))
+        default_cat = (self.current_category
+                       if self.current_category in self.app.data["categories"]
+                       else "일반")
+        cat_var = tk.StringVar(value=phrase["category"] if phrase else default_cat)
+        ttk.Combobox(body, textvariable=cat_var, values=self.app.data["categories"],
+                     font=(FONT, 10)).pack(side="bottom", fill="x", pady=(4, 0))
+        tk.Label(body, text="카테고리", font=(FONT, 9), bg=COLORS["surface"],
+                 fg=COLORS["text_secondary"]).pack(side="bottom", anchor="w", pady=(10, 0))
+
         tk.Label(body, text="문장", font=(FONT, 9), bg=COLORS["surface"],
                  fg=COLORS["text_secondary"]).pack(anchor="w")
         tbox_wrap = tk.Frame(body, bg=COLORS["surface"], highlightbackground=COLORS["border"],
                              highlightthickness=1)
-        tbox_wrap.pack(fill="x", pady=(4, 12))
+        tbox_wrap.pack(fill="both", expand=True, pady=(4, 0))
         tbox = tk.Text(tbox_wrap, font=(FONT, 11), height=4, bd=0, wrap="word",
                        bg=COLORS["surface"], fg=COLORS["text"], padx=8, pady=6)
-        tbox.pack(fill="x")
+        tbox.pack(fill="both", expand=True)
         if phrase:
             tbox.insert("1.0", phrase["text"])
-
-        tk.Label(body, text="카테고리", font=(FONT, 9), bg=COLORS["surface"],
-                 fg=COLORS["text_secondary"]).pack(anchor="w")
-        cat_var = tk.StringVar(value=phrase["category"] if phrase else "일반")
-        ttk.Combobox(body, textvariable=cat_var, values=self.app.data["categories"],
-                     font=(FONT, 10)).pack(fill="x", pady=(4, 14))
-
-        btns = tk.Frame(body, bg=COLORS["surface"])
-        btns.pack(fill="x")
 
         def save():
             txt = tbox.get("1.0", "end").strip()
@@ -911,6 +937,9 @@ class PhrasePanel(tk.Toplevel):
         RoundedButton(btns, text="취소", command=win.destroy, bg_color=COLORS["hover"],
                       hover_color=COLORS["border"], fg=COLORS["text"],
                       width=84, height=32).pack(side="right", padx=(0, 8))
+
+        self._attach_window_controls(win, [head, htitle], min_w=base_w, min_h=base_h,
+                                     on_change=save_geom)
         win.focus_force()
         tbox.focus_set()
 
@@ -959,10 +988,15 @@ class PhrasePanel(tk.Toplevel):
                       hover_color=COLORS["border"], fg=COLORS["text"],
                       width=70, height=30).pack(side="right", padx=(0, 8))
 
-    def _attach_window_controls(self, win, drag_widgets, min_w=280, min_h=320):
+    def _attach_window_controls(self, win, drag_widgets, min_w=280, min_h=320,
+                                on_change=None):
         # Make an overrideredirect Toplevel movable (drag the given widgets) and
-        # resizable from any edge/corner.
+        # resizable from any edge/corner. on_change() fires when a move/resize ends.
         st = {}
+
+        def changed(e=None):
+            if on_change:
+                on_change()
 
         def dstart(e):
             st["d"] = (e.x_root, e.y_root, win.winfo_x(), win.winfo_y())
@@ -974,6 +1008,7 @@ class PhrasePanel(tk.Toplevel):
         for w in drag_widgets:
             w.bind("<ButtonPress-1>", dstart)
             w.bind("<B1-Motion>", dmove)
+            w.bind("<ButtonRelease-1>", changed)
 
         specs = [
             ("l",  dict(relx=0, rely=0, relheight=1, width=5, anchor="nw"), "left_side"),
@@ -1006,6 +1041,7 @@ class PhrasePanel(tk.Toplevel):
             h.place(**place_kw)
             h.bind("<ButtonPress-1>", lambda e, d=dirs: epress(e, d))
             h.bind("<B1-Motion>", edrag)
+            h.bind("<ButtonRelease-1>", changed)
 
     def _manage_categories(self):
         win = tk.Toplevel(self)
